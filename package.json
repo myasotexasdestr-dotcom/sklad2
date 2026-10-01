@@ -1,0 +1,17 @@
+{
+  "name": "sklad-server",
+  "version": "1.0.0",
+  "description": "Бекенд для «Мясо з Техасу» — зберігає спільний стан у SQLite і роздає/синхронізує його між усіма пристроями. Також роздає сам клієнт (public/sklad.html) як статику — той самий URL можна вставити в Telegram BotFather як Web App.",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.19.2"
+  }
+}
