@@ -2300,7 +2300,7 @@ function tabbar(){
         : (isCashier ? [['stock','dashboard'],['purchase','purchase'],['scheduleCalendar','calendar'],['cashierRequest','transfer'],['myHistory','history']]
           : [['stock','stock'],['history','history']])));
   let activeKey = (view==='menu' || view==='staffEdit' || view==='locationEdit' || view==='locationAdd' || view==='productAdd' || view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare' || view==='productionLinks' || view==='analytics' || view==='auditLog' || view==='shiftRatings' || view==='scheduleCalendar' || view==='scheduleDay' || view==='scheduleLocation' || view==='tasks' || view==='taskAdd') ? 'settings' : view;
-  if(view==='stockItemAdd' || view==='warehouseAdd' || view==='warehouseEdit' || view==='inventoryStart' || view==='inventoryDetail' || view==='writeOffStart' || view==='transferStart' || view==='transferReceive' || view==='productionStart' || view==='productionDetail' || view==='prepTransferLocations' || view==='locationTransferNeeds') activeKey = isCook ? 'productionList' : 'stock';
+  if(view==='stockItemAdd' || view==='warehouseAdd' || view==='warehouseEdit' || view==='inventoryStart' || view==='inventoryDetail' || view==='writeOffStart' || view==='transferStart' || view==='transferReceive' || view==='productionStart' || view==='ingredientPrepare' || view==='productionDetail' || view==='prepTransferLocations' || view==='locationTransferNeeds') activeKey = isCook ? 'productionList' : 'stock';
   if(view==='shiftAccept' || view==='notifications' || view==='myRating') activeKey = homeView();
   if(!isOwner() && (view==='transferList')) activeKey = 'stock';
   if(!isOwner() && (view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare')) activeKey = 'stock';
@@ -3272,7 +3272,7 @@ function ingredientsView(){
   visible.slice().sort((a,b)=>a.name.localeCompare(b.name,'uk')).forEach(ing=>{
     const cost = ingredientCostPerUnit(ing);
     const qty = curIngredientQty(ing);
-    const compLabel = (ing.components||[]).map(c=>escapeHtml(c.productName)).join(', ');
+    const compLabel = '';
     const scopeLabel = ing.warehouseId ? ' · тільки '+escapeHtml(curWhName) : '';
     const costLine = showCost ? `<div class="sub text-xs">${fmtMoneyPrecise(cost)} / ${escapeHtml(ing.unit)}${compLabel?' · '+compLabel:''}${scopeLabel}</div>` : (compLabel ? `<div class="sub text-xs">${compLabel}${scopeLabel}</div>` : '');
     const row = el(`
@@ -4973,6 +4973,14 @@ function productionStartView(){
   topBar.querySelector('#prBack').onclick = ()=>{ backFromProduction(); render(); };
   wrap.appendChild(topBar);
   wrap.appendChild(el(`<div class="sub text-xs mb-4">Візьміть сировину зі складу «${escapeHtml((state.warehouses.find(w=>w.id===state.currentWarehouse)||{}).name||'')}», вкажіть втрати при обробці (якщо були) і який продукт отримаєте. Вагу готового продукту вкажете, коли готовка буде завершена.</div>`));
+
+  // Готовка за рецептом: обираємо рецепт зі списку «Рецепти» — продукти підтягуються самі.
+  if(canProduce() && availableRecipeIngredients().some(r=>(r.components||[]).length)){
+    const recipeBtn = el(`<button class="w-full btn-solid py-3 mb-2">Приготувати за рецептом</button>`);
+    recipeBtn.onclick = ()=> openPrepare(null, 'productionStart');
+    wrap.appendChild(recipeBtn);
+    wrap.appendChild(el(`<div class="sub text-xs mb-4">або нижче — готовка з однієї сировини зі втратами.</div>`));
+  }
 
   // Кухар завжди оприбутковує на той самий склад, звідки бере сировину (спрощений сценарій).
   // Заготівельник і власник можуть одразу відправити готовий продукт на конкретну точку.
