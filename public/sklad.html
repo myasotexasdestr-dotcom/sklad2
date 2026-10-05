@@ -1368,7 +1368,7 @@ function lowStockFor(warehouseId){
 // master product/recipe afterwards never change historical numbers.
 function lineUnitCost(line){
   if(line.productType==='dish'){
-    return (line.recipeSnapshot||[]).reduce((s,c)=>s+(Number(c.cost)||0),0);
+    return (line.recipeSnapshot||[]).reduce((s,c)=>s+(Number(c.cost)||0),0) + (Number(line.optionsCostSnapshot)||0);
   }
   return Number(line.costPriceSnapshot)||0;
 }
@@ -1529,6 +1529,8 @@ function dismissNotification(id){
 //           ingredients: [{id, ingredientId, name, unit, amount, costPerUnit, cost}] (only for 'dish'),
 //           costPrice, price, modifier: null | {label, options:[{id,name}]},
 //           optionGroups: [{id,label,options:[{id,name,kind:'none'|'ingredient'|'product',refId,productName,unit,amount,priceDelta}]}]}
+// type 'combo': comboSlots [{id,label,productIds:[menu product ids]}] — комбо збирається з уже готових позицій меню:
+// на кожен слот (бургер, картопля, напій) касир обирає одну з доданих позицій; списується те, що обрали.
 // optionGroups — групи вибору (соус, напій…): при продажу касир обирає по одній опції з кожної групи;
 // опція може списувати рецепт (соус) чи продукт зі складу (напій) і мати доплату.
 function addProduct(data){
@@ -1542,6 +1544,7 @@ function addProduct(data){
     price: Number(data.price)||0,
     modifier: data.modifier || null,
     optionGroups: data.optionGroups || [],
+    comboSlots: data.type==='combo' ? (data.comboSlots||[]) : [],
     recipeVersion: 1, recipeHistory: []
   });
   logEvent('menu', `Додано товар у меню: ${data.name} (${fmtMoney(Number(data.price)||0)})`);
@@ -1581,6 +1584,7 @@ function updateProduct(id, data){
   p.costPrice = Number(data.costPrice)||0;
   p.price = Number(data.price)||0;
   p.optionGroups = data.optionGroups || [];
+  p.comboSlots = data.type==='combo' ? (data.comboSlots||[]) : [];
   logEvent('menu', `Редаговано товар у меню: ${data.name}${recipeChanged?' (змінено рецепт)':''}`);
   saveState(); render();
 }
@@ -1589,6 +1593,43 @@ function deleteProduct(id){
   state.products = state.products.filter(p=>p.id!==id);
   if(p) logEvent('menu', `Видалено товар з меню: ${p.name}`);
   saveState(); render();
+}
+// Розділи вибору для позиції меню: слоти комбо (вибір готової позиції), опції обраних у слотах позицій,
+// і власні групи опцій самої позиції. key — ключ у optionPicks.
+function buildPickSections(p){
+  const nonEmpty = g=>(g.options||[]).length>0;
+  const sections = [];
+  if(p.type==='combo'){
+    (p.comboSlots||[]).forEach(slot=>{
+      const prods = (slot.productIds||[]).map(id=>state.products.find(x=>x.id===id)).filter(Boolean);
+      if(!prods.length) return;
+      sections.push({ key:'slot:'+slot.id, kind:'slot', slot, label:slot.label, options:prods.map(x=>({id:x.id, name:x.name, delta:0})) });
+      const chosen = prods.find(x=>x.id===optionPicks['slot:'+slot.id]);
+      if(chosen) (chosen.optionGroups||[]).filter(nonEmpty).forEach(g=>{
+        sections.push({ key:slot.id+'|'+g.id, kind:'slotgroup', slot, group:g, label:slot.label+': '+g.label, options:g.options.map(o=>({id:o.id, name:o.name, delta:Number(o.priceDelta)||0})) });
+      });
+    });
+  }
+  (p.optionGroups||[]).filter(nonEmpty).forEach(g=>{
+    sections.push({ key:g.id, kind:'group', group:g, label:g.label, options:g.options.map(o=>({id:o.id, name:o.name, delta:Number(o.priceDelta)||0})) });
+  });
+  return sections;
+}
+// Перетворює обране в optionPicks на picks (власні опції) та comboSel (вибір по слотах).
+function resolvePicks(p, sections){
+  const picks = [], comboSelMap = new Map();
+  sections.forEach(sec=>{
+    const pickId = optionPicks[sec.key];
+    if(sec.kind==='group'){ picks.push({ group:sec.group, option:sec.group.options.find(o=>o.id===pickId) }); return; }
+    if(sec.kind==='slot'){
+      const prod = state.products.find(x=>x.id===pickId);
+      comboSelMap.set(sec.slot.id, { slot:sec.slot, product:prod, picks:[] });
+      return;
+    }
+    const sel = comboSelMap.get(sec.slot.id);
+    if(sel) sel.picks.push({ group:sec.group, option:sec.group.options.find(o=>o.id===pickId) });
+  });
+  return { picks, comboSel:[...comboSelMap.values()] };
 }
 function optionCostPerUnit(o){
   const amt = Number(o.amount)||0;
@@ -2772,7 +2813,7 @@ function orderBack(){
 }
 function cartTotal(){ return orderDraft.cart.reduce((s,l)=>s+l.price*l.qty,0); }
 function cartCount(){ return orderDraft.cart.reduce((s,l)=>s+l.qty,0); }
-function addToCart(product, modifierOption, picks){
+function addToCart(product, modifierOption, picks, comboSel){
   // Кожне замовлення ведеться в одній категорії (на це зав'язані зарплата й каса точки), тож перший
   // доданий товар фіксує категорію замовлення; товар іншої категорії, поки кошик не порожній,
   // пропонуємо оформити окремим замовленням.
@@ -2783,15 +2824,22 @@ function addToCart(product, modifierOption, picks){
   orderDraft.category = product.category;
   const modId = modifierOption ? modifierOption.id : null;
   picks = picks || []; // [{group, option}]
-  const optKey = picks.map(x=>x.option.id).sort().join(',');
+  comboSel = comboSel || []; // [{slot, product, picks:[{group,option}]}]
+  const optKey = picks.map(x=>x.option.id).sort().join(',') + '|' + comboSel.map(c=>c.slot.id+'='+c.product.id+':'+c.picks.map(x=>x.option.id).sort().join(',')).join(';');
   const existing = orderDraft.cart.find(l=>l.productId===product.id && (l.modifierId||null)===modId && (l.optionKey||'')===optKey);
   if(existing){ existing.qty++; }
   else{
     orderDraft.cart.push({
       id: uid(), productId: product.id, name: product.name,
-      price: product.price + picks.reduce((s,x)=>s+(Number(x.option.priceDelta)||0),0), qty: 1,
+      price: product.price + picks.reduce((s,x)=>s+(Number(x.option.priceDelta)||0),0) + comboSel.reduce((s,c)=>s+c.picks.reduce((s2,x)=>s2+(Number(x.option.priceDelta)||0),0),0), qty: 1,
       modifierId: modId,
-      modifierName: modifierOption ? modifierOption.name : (picks.length ? picks.map(x=>x.option.name).join(' + ') : null),
+      modifierName: modifierOption ? modifierOption.name : ((comboSel.length||picks.length) ? comboSel.map(c=>c.product.name+(c.picks.length?' ('+c.picks.map(x=>x.option.name).join(', ')+')':'')).concat(picks.map(x=>x.option.name)).join(' + ') : null),
+      comboSelections: comboSel.map(c=>({ slotId:c.slot.id, slotLabel:c.slot.label, productId:c.product.id, name:c.product.name,
+        productType:c.product.type, recipeSnapshot: c.product.type==='dish' ? (c.product.ingredients||[]).map(i=>({...i})) : [],
+        selectedOptions: c.picks.map(x=>({ groupId:x.group.id, groupLabel:x.group.label, optionId:x.option.id, name:x.option.name,
+          kind:x.option.kind||'none', refId:x.option.refId||null, productName:x.option.productName||null, unit:x.option.unit||'',
+          amount:Number(x.option.amount)||0, priceDelta:Number(x.option.priceDelta)||0 })) })),
+      optionsCostSnapshot: picks.reduce((s,x)=>s+optionCostPerUnit(x.option),0),
       optionKey: optKey,
       selectedOptions: picks.map(x=>({ groupId:x.group.id, groupLabel:x.group.label, optionId:x.option.id, name:x.option.name,
         kind:x.option.kind||'none', refId:x.option.refId||null, productName:x.option.productName||null, unit:x.option.unit||'',
@@ -2801,7 +2849,9 @@ function addToCart(product, modifierOption, picks){
       productType: product.type,
       recipeSnapshot: product.type==='dish' ? (product.ingredients||[]).map(i=>({...i})) : [],
       // Snapshot cost too, so P&L analytics stays accurate even if the product is edited/deleted later.
-      costPriceSnapshot: (Number(product.costPrice)||0) + picks.reduce((s,x)=>s+optionCostPerUnit(x.option),0)
+      costPriceSnapshot: product.type==='combo'
+        ? comboSel.reduce((s,c)=>s + (Number(c.product.costPrice)||0) + c.picks.reduce((s2,x)=>s2+optionCostPerUnit(x.option),0), 0) + picks.reduce((s,x)=>s+optionCostPerUnit(x.option),0)
+        : (Number(product.costPrice)||0) + picks.reduce((s,x)=>s+optionCostPerUnit(x.option),0)
     });
   }
   expandedProductId = null;
@@ -2818,31 +2868,36 @@ function warehouseForLocation(locationId){
 function cartConsumption(cart){
   const ingredientNeeds = new Map(); // ingredientId -> {name, unit, amount}
   const productNeeds = new Map(); // name -> {unit, amount}
-  cart.forEach(line=>{
-    if(line.productType==='dish'){
-      (line.recipeSnapshot||[]).forEach(comp=>{
-        const cur = ingredientNeeds.get(comp.ingredientId) || { name: comp.name, unit: comp.unit, amount: 0 };
-        cur.amount += comp.amount * line.qty;
-        ingredientNeeds.set(comp.ingredientId, cur);
-      });
-    } else {
-      const cur = productNeeds.get(line.name) || { unit: null, amount: 0 };
-      cur.amount += line.qty;
-      productNeeds.set(line.name, cur);
-    }
-    // Обрані опції (соус, напій…) теж списують зі складу: рецепт → інгредієнт, продукт → товар.
-    (line.selectedOptions||[]).forEach(o=>{
+  const addIng = (id, name, unit, amount)=>{
+    const cur = ingredientNeeds.get(id) || { name, unit, amount: 0 };
+    cur.amount += amount; ingredientNeeds.set(id, cur);
+  };
+  const addProd = (name, unit, amount)=>{
+    const cur = productNeeds.get(name) || { unit: unit||null, amount: 0 };
+    cur.amount += amount; productNeeds.set(name, cur);
+  };
+  // Обрані опції (соус, напій…) теж списують зі складу: рецепт → інгредієнт, продукт → товар.
+  const addOptions = (opts, qty)=>{
+    (opts||[]).forEach(o=>{
       if(!(o.amount>0)) return;
-      if(o.kind==='ingredient' && o.refId){
-        const cur = ingredientNeeds.get(o.refId) || { name: o.name, unit: o.unit, amount: 0 };
-        cur.amount += o.amount * line.qty;
-        ingredientNeeds.set(o.refId, cur);
-      } else if(o.kind==='product' && o.productName){
-        const cur = productNeeds.get(o.productName) || { unit: o.unit||null, amount: 0 };
-        cur.amount += o.amount * line.qty;
-        productNeeds.set(o.productName, cur);
-      }
+      if(o.kind==='ingredient' && o.refId) addIng(o.refId, o.name, o.unit, o.amount*qty);
+      else if(o.kind==='product' && o.productName) addProd(o.productName, o.unit, o.amount*qty);
     });
+  };
+  // Одна позиція (страва чи сирий товар) зі своєю кількістю й опціями.
+  const addItem = (type, name, recipe, opts, qty)=>{
+    if(type==='dish') (recipe||[]).forEach(comp=> addIng(comp.ingredientId, comp.name, comp.unit, comp.amount*qty));
+    else addProd(name, null, qty);
+    addOptions(opts, qty);
+  };
+  cart.forEach(line=>{
+    if(line.productType==='combo'){
+      // Комбо: списуємо те, що обрано в кожному слоті (разом з опціями цих позицій), + власні опції комбо.
+      (line.comboSelections||[]).forEach(c=> addItem(c.productType, c.name, c.recipeSnapshot, c.selectedOptions, line.qty));
+      addOptions(line.selectedOptions, line.qty);
+    } else {
+      addItem(line.productType, line.name, line.recipeSnapshot, line.selectedOptions, line.qty);
+    }
   });
   return { ingredientNeeds, productNeeds };
 }
@@ -3041,38 +3096,33 @@ function orderProductsStep(){
       </div>
     `);
     const head = row.querySelector('div.flex');
-    const groups = (p.optionGroups||[]).filter(g=>(g.options||[]).length);
-    if(groups.length){
+    const sections = buildPickSections(p);
+    if(sections.length){
       head.onclick = ()=>{ expandedProductId = isExpanded ? null : p.id; optionPicks = {}; render(); };
       if(isExpanded){
         const panel = el(`<div class="mt-3 pt-3" style="border-top:1px solid #2a2b31"></div>`);
-        const addBtn = el(`<button class="btn-solid w-full py-2.5 mt-1">Додати</button>`);
-        const updateAdd = ()=>{
-          const ready = groups.every(g=>optionPicks[g.id]);
-          addBtn.disabled = !ready; addBtn.style.opacity = ready ? '1' : '.5';
-        };
-        groups.forEach(g=>{
-          panel.appendChild(el(`<div class="sub text-xs mb-2">${escapeHtml(g.label)}</div>`));
+        sections.forEach(sec=>{
+          panel.appendChild(el(`<div class="sub text-xs mb-2">${escapeHtml(sec.label)}</div>`));
           const rowOpts = el(`<div class="flex flex-wrap gap-2 mb-3"></div>`);
-          const btns = {};
-          const paint = ()=>{ Object.entries(btns).forEach(([id,b])=>{ const on = optionPicks[g.id]===id; b.style.background = on ? 'var(--accent)' : 'var(--card3)'; b.style.color = on ? '#fff' : 'var(--text)'; }); };
-          g.options.forEach(o=>{
-            const d = Number(o.priceDelta)||0;
-            const b = el(`<button style="border:none;border-radius:999px;padding:8px 14px;font-size:.85rem;background:var(--card3);color:var(--text)">${escapeHtml(o.name)}${d?' +'+fmtMoney(d):''}</button>`);
-            b.onclick = (e)=>{ e.stopPropagation(); optionPicks[g.id] = o.id; paint(); updateAdd(); };
-            btns[o.id] = b; rowOpts.appendChild(b);
+          sec.options.forEach(o=>{
+            const on = optionPicks[sec.key]===o.id;
+            const b = el(`<button style="border:none;border-radius:999px;padding:8px 14px;font-size:.85rem;background:${on?'var(--accent)':'var(--card3)'};color:${on?'#fff':'var(--text)'}">${escapeHtml(o.name)}${o.delta?' +'+fmtMoney(o.delta):''}</button>`);
+            b.onclick = (e)=>{ e.stopPropagation(); optionPicks[sec.key] = o.id; render(); };
+            rowOpts.appendChild(b);
           });
           panel.appendChild(rowOpts);
         });
+        const ready = sections.every(sec=>optionPicks[sec.key]);
+        const addBtn = el(`<button class="btn-solid w-full py-2.5 mt-1">Додати</button>`);
+        addBtn.disabled = !ready; addBtn.style.opacity = ready ? '1' : '.5';
         addBtn.onclick = (e)=>{
           e.stopPropagation();
-          if(!groups.every(g=>optionPicks[g.id])) return;
-          const picks = groups.map(g=>({ group:g, option:g.options.find(o=>o.id===optionPicks[g.id]) }));
+          if(!ready) return;
+          const result = resolvePicks(p, sections);
           optionPicks = {};
-          addToCart(p, null, picks);
+          addToCart(p, null, result.picks, result.comboSel);
         };
         panel.appendChild(addBtn);
-        updateAdd();
         row.appendChild(panel);
       }
     } else if(p.modifier && p.modifier.options && p.modifier.options.length){
@@ -6516,7 +6566,8 @@ function menuSettingsView(){
       const row = el(`
         <div class="card p-3 mb-2 flex items-center justify-between">
           <div>
-            <div class="font-medium">${escapeHtml(p.name)} ${p.type==='dish'?'<span class="sub" style="font-size:.65rem">· страва</span>':''}</div>
+            <div class="font-medium">${escapeHtml(p.name)} ${p.type==='dish'?'<span class="sub" style="font-size:.65rem">· страва</span>':(p.type==='combo'?'<span class="sub" style="font-size:.65rem">· комбо</span>':'')}</div>
+            ${p.type==='combo'?(p.comboSlots||[]).map(sl=>`<div class="sub text-xs">${escapeHtml(sl.label)}: ${(sl.productIds||[]).map(id=>{const x=state.products.find(q=>q.id===id);return escapeHtml(x?x.name:'?');}).join(', ')}</div>`).join(''):''}
             <div class="sub text-xs">Ціна: ${fmtMoney(p.price)} · Собівартість: ${fmtMoney(p.costPrice||0)} · Маржа: ${fmtMoney(margin)}${!menuCategoryFilter?' · '+escapeHtml(catTag):''}</div>
             ${p.modifier?`<div class="sub text-xs">${escapeHtml(p.modifier.label)}: ${p.modifier.options.map(o=>escapeHtml(o.name)).join(', ')}</div>`:''}
             ${(p.optionGroups||[]).map(g=>`<div class="sub text-xs">${escapeHtml(g.label)}: ${(g.options||[]).map(o=>escapeHtml(o.name)).join(', ')}</div>`).join('')}
@@ -6590,9 +6641,22 @@ function productAddView(){
   const costPriceInput = costPriceField.querySelector('input');
   costPriceInput.setAttribute('inputmode','decimal');
 
+  const comboSection = el(`<div></div>`);
+  let draftSlots = editing ? (editing.comboSlots||[]).map(sl=>({ ...sl, productIds:(sl.productIds||[]).slice() })) : [];
+  function comboAvgCost(){
+    return draftSlots.reduce((sum, sl)=>{
+      const costs = (sl.productIds||[]).map(id=>{ const x = state.products.find(q=>q.id===id); return x ? (Number(x.costPrice)||0) : 0; });
+      return sum + (costs.length ? costs.reduce((a,b)=>a+b,0)/costs.length : 0);
+    }, 0);
+  }
   function refreshTypeUI(){
     dishSection.style.display = draftType==='dish' ? '' : 'none';
-    if(draftType==='dish'){
+    comboSection.style.display = draftType==='combo' ? '' : 'none';
+    if(draftType==='combo'){
+      costPriceInput.disabled = true;
+      costPriceInput.style.opacity = '.6';
+      costPriceInput.value = comboAvgCost().toFixed(2);
+    } else if(draftType==='dish'){
       costPriceInput.disabled = true;
       costPriceInput.style.opacity = '.6';
       recalcCost();
@@ -6603,7 +6667,7 @@ function productAddView(){
   }
 
   const typeRow = segmentedPicker(
-    [['product','Товар','📦'],['dish','Страва','🍲']],
+    [['product','Товар','📦'],['dish','Страва','🍲'],['combo','Комбо','🍔']],
     draftType,
     (key)=>{ draftType = key; refreshTypeUI(); }
   );
@@ -6686,6 +6750,52 @@ function productAddView(){
   dishSection.appendChild(addIngRow);
 
   wrap.appendChild(dishSection);
+
+  // --- Комбо: слоти з готових позицій меню (бургер, картопля фрі, напій…) ---
+  comboSection.appendChild(el(`<div class="font-semibold text-sm mb-1">З чого складається комбо</div>`));
+  comboSection.appendChild(el(`<div class="sub text-xs mb-2">Додайте слоти (наприклад «Бургер», «Картопля», «Напій») і до кожного — позиції з меню, з яких касир обиратиме. Собівартість — орієнтовна (середня по слотах), а в продажу рахується за реально обраним.</div>`));
+  const slotsHost = el(`<div class="mb-2"></div>`);
+  comboSection.appendChild(slotsHost);
+  const comboCandidates = ()=> state.products.filter(x=>x.type!=='combo' && (!editing || x.id!==editing.id)).sort((a,b)=>a.name.localeCompare(b.name,'uk'));
+  function renderSlots(){
+    slotsHost.innerHTML = '';
+    draftSlots.forEach(sl=>{
+      const card = el(`<div class="card p-3 mb-3"></div>`);
+      const head = el(`<div class="flex items-center justify-between mb-2"><div class="font-semibold text-sm">${escapeHtml(sl.label)}</div><button data-rms style="background:none;border:none;color:var(--danger);font-size:1.1rem;padding:0 4px;cursor:pointer">&times;</button></div>`);
+      head.querySelector('[data-rms]').onclick = ()=>{ draftSlots = draftSlots.filter(x=>x.id!==sl.id); renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2); };
+      card.appendChild(head);
+      if(sl.productIds.length===0) card.appendChild(el(`<div class="sub text-xs mb-2">Ще немає позицій</div>`));
+      sl.productIds.forEach(pid=>{
+        const pr = state.products.find(x=>x.id===pid);
+        const r = el(`<div class="flex items-center justify-between mb-1"><div class="text-sm">${escapeHtml(pr?pr.name:'(видалено)')}</div><button data-rmp style="background:none;border:none;color:var(--danger);font-size:1rem;padding:0 4px;cursor:pointer">&times;</button></div>`);
+        r.querySelector('[data-rmp]').onclick = ()=>{ sl.productIds = sl.productIds.filter(x=>x!==pid); renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2); };
+        card.appendChild(r);
+      });
+      const cands = comboCandidates().filter(x=>!sl.productIds.includes(x.id));
+      const addBox = el(`<div class="flex gap-2 items-start mt-2"><div data-sel style="flex:1"></div><button class="btn-line" style="padding:10px 14px">+ Додати</button></div>`);
+      if(cands.length===0){
+        addBox.innerHTML = '<div class="sub text-xs">Немає інших позицій меню для додавання.</div>';
+      } else {
+        const sel = customSelect(cands.map(x=>({value:x.id, label:x.name})), null, null);
+        addBox.querySelector('[data-sel]').appendChild(sel);
+        addBox.querySelector(':scope > button').onclick = ()=>{
+          const id = sel.getValue(); if(!id) return;
+          sl.productIds.push(id); renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2);
+        };
+      }
+      card.appendChild(addBox);
+      slotsHost.appendChild(card);
+    });
+  }
+  renderSlots();
+  const addSlotRow = el(`<div class="flex gap-2 mb-4"><input type="text" placeholder="Новий слот, напр. Бургер" class="flex-1 py-2.5 px-3" style="border-radius:10px;background:var(--card3);color:var(--text);border:none"><button class="btn-line" style="padding:0 16px">+ Слот</button></div>`);
+  addSlotRow.querySelector('button').onclick = ()=>{
+    const inp = addSlotRow.querySelector('input'); const label = inp.value.trim();
+    if(!label){ appAlert('Вкажіть назву слота'); return; }
+    draftSlots.push({ id: uid(), label, productIds: [] }); inp.value = ''; renderSlots();
+  };
+  comboSection.appendChild(addSlotRow);
+  wrap.appendChild(comboSection);
   wrap.appendChild(costPriceField);
 
   const priceField = field('Ціна продажу, ' + String.fromCharCode(8372));
@@ -6799,7 +6909,12 @@ function productAddView(){
     const price = parseFloat((priceInput.value||'').replace(',','.')) || 0;
     if(price<=0){ err.textContent = 'Вкажіть ціну продажу'; return; }
     let costPrice = 0;
-    if(draftType==='dish'){
+    if(draftType==='combo'){
+      if(draftSlots.length===0){ err.textContent = 'Додайте хоча б один слот комбо'; return; }
+      const emptySlot = draftSlots.find(sl=>sl.productIds.length===0);
+      if(emptySlot){ err.textContent = 'У слоті «'+emptySlot.label+'» немає жодної позиції'; return; }
+      costPrice = comboAvgCost();
+    } else if(draftType==='dish'){
       if(draftIngredients.length===0){ err.textContent = 'Додайте хоча б один інгредієнт'; return; }
       costPrice = draftIngredients.reduce((s,i)=>s+i.cost,0);
     } else {
@@ -6807,7 +6922,7 @@ function productAddView(){
     }
     const emptyG = draftGroups.find(g=>g.options.length===0);
     if(emptyG){ err.textContent = 'У групі «'+emptyG.label+'» немає жодного варіанта — додайте або видаліть її'; return; }
-    const data = { name, category: draftCategory, type: draftType, ingredients: draftIngredients, costPrice, price, modifier: null, optionGroups: draftGroups };
+    const data = { name, category: draftCategory, type: draftType, ingredients: draftIngredients, costPrice, price, modifier: null, optionGroups: draftGroups, comboSlots: draftSlots };
     if(editing) updateProduct(editing.id, data);
     else addProduct(data);
     editingProductId = null;
