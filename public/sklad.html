@@ -6559,7 +6559,7 @@ function productAddView(){
 
     if(available.length===0){
       dishSection.querySelector('[data-addingpanel]')?.remove();
-      const noIng = el(`<div data-addingpanel class="sub text-xs mb-4">Ще немає жодного інгредієнта. Додайте їх у розділі «Інгредієнти» в налаштуваннях.</div>`);
+      const noIng = el(`<div data-addingpanel class="sub text-xs mb-4">Ще немає жодного інгредієнта. Додайте їх у розділі «Рецепти» в налаштуваннях.</div>`);
       ingList.after(noIng);
       return;
     }
@@ -6586,7 +6586,7 @@ function productAddView(){
   ingAddBtn.onclick = ()=>{
     const ingId = ingSelect.getValue();
     const ing = availableRecipeIngredients().find(i=>i.id===ingId);
-    if(!ing){ appAlert('Ще немає жодного інгредієнта. Додайте їх у розділі «Інгредієнти».'); return; }
+    if(!ing){ appAlert('Ще немає жодного інгредієнта. Додайте їх у розділі «Рецепти».'); return; }
     const amount = parseFloat((ingAmountInput.value||'').replace(',','.'));
     if(!amount || amount<=0){ appAlert('Вкажіть кількість інгредієнта'); return; }
     const costPerUnit = ingredientCostPerUnit(ing);
