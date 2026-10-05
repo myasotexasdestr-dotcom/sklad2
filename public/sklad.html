@@ -6753,45 +6753,58 @@ function productAddView(){
 
   // --- Комбо: слоти з готових позицій меню (бургер, картопля фрі, напій…) ---
   comboSection.appendChild(el(`<div class="font-semibold text-sm mb-1">З чого складається комбо</div>`));
-  comboSection.appendChild(el(`<div class="sub text-xs mb-2">Додайте слоти (наприклад «Бургер», «Картопля», «Напій») і до кожного — позиції з меню, з яких касир обиратиме. Собівартість — орієнтовна (середня по слотах), а в продажу рахується за реально обраним.</div>`));
+  comboSection.appendChild(el(`<div class="sub text-xs mb-2">Оберіть зі списку позиції меню (бургер, картопля, напій…) і додайте в комбо. Якщо касир має обирати між кількома (напр. різні напої) — додайте у слот ще варіанти. Собівартість — орієнтовна, а в продажу рахується за реально обраним.</div>`));
   const slotsHost = el(`<div class="mb-2"></div>`);
   comboSection.appendChild(slotsHost);
   const comboCandidates = ()=> state.products.filter(x=>x.type!=='combo' && (!editing || x.id!==editing.id)).sort((a,b)=>a.name.localeCompare(b.name,'uk'));
   function renderSlots(){
     slotsHost.innerHTML = '';
-    draftSlots.forEach(sl=>{
+    draftSlots.forEach((sl, idx)=>{
       const card = el(`<div class="card p-3 mb-3"></div>`);
-      const head = el(`<div class="flex items-center justify-between mb-2"><div class="font-semibold text-sm">${escapeHtml(sl.label)}</div><button data-rms style="background:none;border:none;color:var(--danger);font-size:1.1rem;padding:0 4px;cursor:pointer">&times;</button></div>`);
+      const head = el(`<div class="flex items-center gap-2 mb-2"><input data-lbl type="text" placeholder="Назва слота (бачить касир)" class="flex-1 py-2 px-3" style="border-radius:10px;background:var(--card3);color:var(--text);border:none;font-weight:600"><button data-rms style="background:none;border:none;color:var(--danger);font-size:1.2rem;padding:0 4px;cursor:pointer">&times;</button></div>`);
+      const lbl = head.querySelector('[data-lbl]');
+      lbl.value = sl.label || '';
+      lbl.addEventListener('input', ()=>{ sl.label = lbl.value; });
       head.querySelector('[data-rms]').onclick = ()=>{ draftSlots = draftSlots.filter(x=>x.id!==sl.id); renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2); };
       card.appendChild(head);
-      // Усі позиції меню — кнопками: натисніть, щоб додати в слот чи прибрати.
-      const cands = comboCandidates();
-      if(cands.length===0){
-        card.appendChild(el(`<div class="sub text-xs">У меню ще немає інших позицій — спершу додайте їх.</div>`));
-      } else {
-        card.appendChild(el(`<div class="sub text-xs mb-2">Натисніть на позиції, з яких можна обирати в цьому слоті:</div>`));
-        const chips = el(`<div class="flex flex-wrap gap-2"></div>`);
-        cands.forEach(x=>{
-          const on = sl.productIds.includes(x.id);
-          const b = el(`<button type="button" style="border:none;border-radius:999px;padding:8px 14px;font-size:.85rem;background:${on?'var(--accent)':'var(--card3)'};color:${on?'#fff':'var(--text)'}">${on?'✓ ':''}${escapeHtml(x.name)}</button>`);
-          b.onclick = ()=>{
-            sl.productIds = on ? sl.productIds.filter(id=>id!==x.id) : sl.productIds.concat([x.id]);
-            renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2);
-          };
-          chips.appendChild(b);
-        });
-        card.appendChild(chips);
+      card.appendChild(el(`<div class="sub text-xs mb-1">${sl.productIds.length>1?'Касир обере одну з позицій:':'Позиція в комбо:'}</div>`));
+      sl.productIds.forEach(pid=>{
+        const pr = state.products.find(x=>x.id===pid);
+        const r = el(`<div class="flex items-center justify-between mb-1"><div class="text-sm">${escapeHtml(pr?pr.name:'(видалено)')}</div><button data-rmp style="background:none;border:none;color:var(--danger);font-size:1rem;padding:0 4px;cursor:pointer">&times;</button></div>`);
+        r.querySelector('[data-rmp]').onclick = ()=>{ sl.productIds = sl.productIds.filter(x=>x!==pid); renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2); };
+        card.appendChild(r);
+      });
+      // ще варіант у цей слот (напр. інший напій) — вибір зі списку всіх позицій меню
+      const cands = comboCandidates().filter(x=>!sl.productIds.includes(x.id));
+      if(cands.length){
+        const addBox = el(`<div class="mt-2 pt-2" style="border-top:1px solid #2a2b31"><div class="sub text-xs mb-1.5">Додати ще варіант на вибір</div><div data-sel class="mb-2"></div></div>`);
+        const sel = customSelect(cands.map(x=>({value:x.id, label:x.name})), null, null);
+        addBox.querySelector('[data-sel]').appendChild(sel);
+        const addBtn = el(`<button type="button" class="btn-line w-full py-2">+ Додати варіант</button>`);
+        addBtn.onclick = ()=>{ const id = sel.getValue(); if(!id) return; sl.productIds.push(id); renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2); };
+        addBox.appendChild(addBtn);
+        card.appendChild(addBox);
       }
       slotsHost.appendChild(card);
     });
   }
   renderSlots();
-  const addSlotRow = el(`<div class="flex gap-2 mb-4"><input type="text" placeholder="Новий слот, напр. Бургер" class="flex-1 py-2.5 px-3" style="border-radius:10px;background:var(--card3);color:var(--text);border:none"><button class="btn-line" style="padding:0 16px">+ Слот</button></div>`);
-  addSlotRow.querySelector('button').onclick = ()=>{
-    const inp = addSlotRow.querySelector('input'); const label = inp.value.trim();
-    if(!label){ appAlert('Вкажіть назву слота'); return; }
-    draftSlots.push({ id: uid(), label, productIds: [] }); inp.value = ''; renderSlots();
-  };
+  const addSlotRow = el(`<div class="mb-4"><div class="sub text-xs mb-1.5">Додати в комбо позицію з меню</div><div data-sel class="mb-2"></div></div>`);
+  const slotCands = comboCandidates();
+  if(slotCands.length===0){
+    addSlotRow.appendChild(el(`<div class="sub text-xs">У меню ще немає позицій — спершу додайте страви чи товари.</div>`));
+  } else {
+    const topSel = customSelect(slotCands.map(x=>({value:x.id, label:x.name})), null, null);
+    addSlotRow.querySelector('[data-sel]').appendChild(topSel);
+    const addSlotBtn = el(`<button type="button" class="btn-solid w-full py-2.5">+ Додати в комбо</button>`);
+    addSlotBtn.onclick = ()=>{
+      const id = topSel.getValue(); const pr = state.products.find(x=>x.id===id);
+      if(!pr) return;
+      draftSlots.push({ id: uid(), label: pr.name, productIds: [id] });
+      renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2);
+    };
+    addSlotRow.appendChild(addSlotBtn);
+  }
   comboSection.appendChild(addSlotRow);
   wrap.appendChild(comboSection);
   wrap.appendChild(costPriceField);
@@ -6908,7 +6921,8 @@ function productAddView(){
     if(price<=0){ err.textContent = 'Вкажіть ціну продажу'; return; }
     let costPrice = 0;
     if(draftType==='combo'){
-      if(draftSlots.length===0){ err.textContent = 'Додайте хоча б один слот комбо'; return; }
+      if(draftSlots.length===0){ err.textContent = 'Додайте в комбо хоча б одну позицію'; return; }
+      draftSlots.forEach(sl=>{ if(!String(sl.label||'').trim()){ const f = state.products.find(x=>x.id===sl.productIds[0]); sl.label = f ? f.name : 'Позиція'; } });
       const emptySlot = draftSlots.find(sl=>sl.productIds.length===0);
       if(emptySlot){ err.textContent = 'У слоті «'+emptySlot.label+'» немає жодної позиції'; return; }
       costPrice = comboAvgCost();
