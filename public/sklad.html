@@ -602,23 +602,39 @@ function openStaffEdit(id){
 
 // everywhere=true duplicates the product onto every warehouse (starting qty applies only to the
 // current one, others start at 0 since each warehouse then tracks its own real count independently).
+// `min` is either a plain number (same minimum for every склад the product lands on) or an object
+// { [warehouseId]: number } to give each склад its own minimum (e.g. Лаваш: База 50, ЦУМ 15).
 function addStockItem(name, unit, qty, min, costPerUnit, everywhere, category){
   category = category==='fastfood' ? 'fastfood' : 'meat';
+  const minFor = (whId)=> (min && typeof min==='object') ? (Number(min[whId])||0) : (Number(min)||0);
   if(everywhere && state.warehouses.length>1){
     state.warehouses.forEach(w=>{
       state.stockItems.push({
         id: uid(), warehouseId: w.id, name, unit, category,
         qty: w.id===state.currentWarehouse ? (Number(qty)||0) : 0,
-        min: Number(min)||0, costPerUnit: Number(costPerUnit)||0
+        min: minFor(w.id), costPerUnit: Number(costPerUnit)||0
       });
     });
   } else {
     state.stockItems.push({
       id: uid(), warehouseId: state.currentWarehouse,
-      name, unit, category, qty: Number(qty)||0, min: Number(min)||0, costPerUnit: Number(costPerUnit)||0
+      name, unit, category, qty: Number(qty)||0, min: minFor(state.currentWarehouse), costPerUnit: Number(costPerUnit)||0
     });
   }
   saveState(); render();
+}
+// All stockItems rows that are the same product on different складах (same name, case/space-insensitive —
+// the same matching findOrCreateStockItemForPurchase uses). Used to edit the per-склад minimum in one place.
+function stockRowsForProduct(name){
+  const key = String(name||'').trim().toLowerCase();
+  return state.stockItems.filter(i=>String(i.name||'').trim().toLowerCase()===key);
+}
+// Sets item.min for several rows at once ({ [stockItemId]: min }) WITHOUT saving/rendering — caller saves once.
+function applyStockMins(map){
+  Object.keys(map||{}).forEach(id=>{
+    const it = state.stockItems.find(i=>i.id===id);
+    if(it) it.min = Number(map[id])||0;
+  });
 }
 function deleteStockItem(id){
   state.stockItems = state.stockItems.filter(i=>i.id!==id);
@@ -3501,11 +3517,51 @@ function stockItemAddView(){
   if(editing) qtyInput.value = fmt(editing.qty);
   wrap.appendChild(qtyField);
 
+  // Мінімальний залишок — окремо для кожного складу (напр. Лаваш: База 50, ЦУМ 15). З одним складом
+  // це звичайне поле, з кількома — рядок на кожен склад, де цей продукт є (або буде створений).
+  const multiWh = state.warehouses.length>1;
+  const parseNum = (s)=> parseFloat(String(s||'').replace(',','.')) || 0;
+  const siblingRows = editing ? stockRowsForProduct(editing.name) : [];
+  let availEverywhere = true;
   const minField = field('Мінімальний залишок (попередження)', '0');
   const minInput = minField.querySelector('input');
   minInput.setAttribute('inputmode','decimal');
   if(editing) minInput.value = fmt(editing.min);
-  wrap.appendChild(minField);
+  const minBox = el(`<div class="mb-4"></div>`);
+  const draftMins = {};   // key -> введений текст (зберігається, коли перемикаємо «Усі склади / Тільки …»)
+  const minInputs = {};   // key -> <input>; key = id рядка stockItems (редагування) або id складу (новий продукт)
+  function renderMinBox(){
+    minBox.innerHTML = '';
+    Object.keys(minInputs).forEach(k=>{ delete minInputs[k]; });
+    const targets = [];
+    if(editing){
+      state.warehouses.forEach(w=>{
+        const r = siblingRows.find(x=>x.warehouseId===w.id);
+        if(r) targets.push({ key: r.id, label: w.name, initial: fmt(r.min) });
+      });
+    } else if(availEverywhere){
+      state.warehouses.forEach(w=> targets.push({ key: w.id, label: w.name, initial: '' }));
+    } else {
+      const w = state.warehouses.find(x=>x.id===state.currentWarehouse);
+      targets.push({ key: state.currentWarehouse, label: w ? w.name : '', initial: '' });
+    }
+    minBox.appendChild(el(`<div class="sub text-xs mb-1.5">Мінімальний залишок (попередження) — окремо для кожного складу</div>`));
+    targets.forEach(t=>{
+      const row = el(`
+        <div class="flex items-center gap-3 mb-2">
+          <div class="flex-1 text-sm font-semibold">${escapeHtml(t.label)}</div>
+          <input type="text" inputmode="decimal" class="py-3 px-3" style="width:110px;border-radius:14px;background:var(--card3);color:var(--text);border:none;text-align:right" placeholder="0">
+        </div>
+      `);
+      const inp = row.querySelector('input');
+      inp.value = (t.key in draftMins) ? draftMins[t.key] : t.initial;
+      inp.oninput = ()=>{ draftMins[t.key] = inp.value; };
+      minInputs[t.key] = inp;
+      minBox.appendChild(row);
+    });
+  }
+  if(multiWh){ renderMinBox(); wrap.appendChild(minBox); }
+  else wrap.appendChild(minField);
 
   const costField = field('Закупівельна ціна за одиницю, ' + String.fromCharCode(8372), '0');
   const costInput = costField.querySelector('input');
@@ -3514,14 +3570,14 @@ function stockItemAddView(){
   wrap.appendChild(costField);
 
   // New products default to every warehouse; can instead be restricted to the one you're on right now.
-  let availEverywhere = true;
+  // (availEverywhere оголошено вище, разом із блоком мінімальних залишків — той залежить від цього вибору)
   if(!editing && state.warehouses.length>1){
     const curWhName = (state.warehouses.find(w=>w.id===state.currentWarehouse)||{}).name || '';
     wrap.appendChild(el(`<div class="sub text-xs mb-1.5">Доступність продукту</div>`));
     const availRow = segmentedPicker(
       [['all','Усі склади'],['one','Тільки '+curWhName]],
       availEverywhere ? 'all' : 'one',
-      (key)=>{ availEverywhere = key==='all'; }
+      (key)=>{ availEverywhere = key==='all'; renderMinBox(); }
     );
     wrap.appendChild(availRow);
     wrap.appendChild(el(`<div class="sub text-xs mb-4">На «Усіх складах» початковий залишок буде застосовано лише тут, інші почнуть з 0 — далі кожен склад веде свій облік окремо.</div>`));
@@ -3560,9 +3616,21 @@ function stockItemAddView(){
     const name = nameInput.value.trim();
     if(!name){ err.textContent = 'Введіть назву продукту'; return; }
     const qty = parseFloat((qtyInput.value||'').replace(',','.')) || 0;
-    const min = parseFloat((minInput.value||'').replace(',','.')) || 0;
+    let min = parseNum(minInput.value);
+    const otherMins = {};
+    if(multiWh){
+      if(editing){
+        // свій рядок — через updateStockItem; мінімуми на інших складах цього ж продукту — окремо
+        min = parseNum(minInputs[editing.id] && minInputs[editing.id].value);
+        siblingRows.forEach(r=>{ if(r.id!==editing.id && minInputs[r.id]) otherMins[r.id] = parseNum(minInputs[r.id].value); });
+      } else {
+        min = {};
+        Object.keys(minInputs).forEach(k=>{ min[k] = parseNum(minInputs[k].value); });
+      }
+    }
     const cost = parseFloat((costInput.value||'').replace(',','.')) || 0;
     if(editing){
+      applyStockMins(otherMins);
       updateStockItem(editing.id, { name, unit: draftUnit, qty, min, costPerUnit: cost, category: draftCategory });
     } else {
       addStockItem(name, draftUnit, qty, min, cost, availEverywhere, draftCategory);
