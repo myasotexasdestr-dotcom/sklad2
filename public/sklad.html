@@ -335,6 +335,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
+let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
 let menuCategoryFilter = null; // null (усі) | 'meat' | 'fastfood' — той самий патерн табів, що й у «Новому замовленні»
@@ -1526,7 +1527,10 @@ function dismissNotification(id){
 // ---- Меню (товари для "Створити замовлення") ----
 // product: {id, name, category:'meat'|'fastfood', type:'product'|'dish',
 //           ingredients: [{id, ingredientId, name, unit, amount, costPerUnit, cost}] (only for 'dish'),
-//           costPrice, price, modifier: null | {label, options:[{id,name}]}}
+//           costPrice, price, modifier: null | {label, options:[{id,name}]},
+//           optionGroups: [{id,label,options:[{id,name,kind:'none'|'ingredient'|'product',refId,productName,unit,amount,priceDelta}]}]}
+// optionGroups — групи вибору (соус, напій…): при продажу касир обирає по одній опції з кожної групи;
+// опція може списувати рецепт (соус) чи продукт зі складу (напій) і мати доплату.
 function addProduct(data){
   state.products.push({
     id: uid(),
@@ -1537,6 +1541,7 @@ function addProduct(data){
     costPrice: Number(data.costPrice)||0,
     price: Number(data.price)||0,
     modifier: data.modifier || null,
+    optionGroups: data.optionGroups || [],
     recipeVersion: 1, recipeHistory: []
   });
   logEvent('menu', `Додано товар у меню: ${data.name} (${fmtMoney(Number(data.price)||0)})`);
@@ -1575,6 +1580,7 @@ function updateProduct(id, data){
   p.ingredients = newIngredients;
   p.costPrice = Number(data.costPrice)||0;
   p.price = Number(data.price)||0;
+  p.optionGroups = data.optionGroups || [];
   logEvent('menu', `Редаговано товар у меню: ${data.name}${recipeChanged?' (змінено рецепт)':''}`);
   saveState(); render();
 }
@@ -1583,6 +1589,12 @@ function deleteProduct(id){
   state.products = state.products.filter(p=>p.id!==id);
   if(p) logEvent('menu', `Видалено товар з меню: ${p.name}`);
   saveState(); render();
+}
+function optionCostPerUnit(o){
+  const amt = Number(o.amount)||0;
+  if(o.kind==='ingredient'){ const ing = state.recipeIngredients.find(i=>i.id===o.refId); return ing ? ingredientCostPerUnit(ing)*amt : 0; }
+  if(o.kind==='product') return productCostByName(o.productName)*amt;
+  return 0;
 }
 function productsFor(category){
   return state.products.filter(p=>p.category===category);
@@ -2760,7 +2772,7 @@ function orderBack(){
 }
 function cartTotal(){ return orderDraft.cart.reduce((s,l)=>s+l.price*l.qty,0); }
 function cartCount(){ return orderDraft.cart.reduce((s,l)=>s+l.qty,0); }
-function addToCart(product, modifierOption){
+function addToCart(product, modifierOption, picks){
   // Кожне замовлення ведеться в одній категорії (на це зав'язані зарплата й каса точки), тож перший
   // доданий товар фіксує категорію замовлення; товар іншої категорії, поки кошик не порожній,
   // пропонуємо оформити окремим замовленням.
@@ -2770,18 +2782,26 @@ function addToCart(product, modifierOption){
   }
   orderDraft.category = product.category;
   const modId = modifierOption ? modifierOption.id : null;
-  const existing = orderDraft.cart.find(l=>l.productId===product.id && (l.modifierId||null)===modId);
+  picks = picks || []; // [{group, option}]
+  const optKey = picks.map(x=>x.option.id).sort().join(',');
+  const existing = orderDraft.cart.find(l=>l.productId===product.id && (l.modifierId||null)===modId && (l.optionKey||'')===optKey);
   if(existing){ existing.qty++; }
   else{
     orderDraft.cart.push({
-      id: uid(), productId: product.id, name: product.name, price: product.price, qty: 1,
-      modifierId: modId, modifierName: modifierOption ? modifierOption.name : null,
+      id: uid(), productId: product.id, name: product.name,
+      price: product.price + picks.reduce((s,x)=>s+(Number(x.option.priceDelta)||0),0), qty: 1,
+      modifierId: modId,
+      modifierName: modifierOption ? modifierOption.name : (picks.length ? picks.map(x=>x.option.name).join(' + ') : null),
+      optionKey: optKey,
+      selectedOptions: picks.map(x=>({ groupId:x.group.id, groupLabel:x.group.label, optionId:x.option.id, name:x.option.name,
+        kind:x.option.kind||'none', refId:x.option.refId||null, productName:x.option.productName||null, unit:x.option.unit||'',
+        amount:Number(x.option.amount)||0, priceDelta:Number(x.option.priceDelta)||0 })),
       // Snapshot the техкарта (product type + its recipe) as it is right now, so this sale always
       // deducts and records what was actually used, even if the master recipe changes later.
       productType: product.type,
       recipeSnapshot: product.type==='dish' ? (product.ingredients||[]).map(i=>({...i})) : [],
       // Snapshot cost too, so P&L analytics stays accurate even if the product is edited/deleted later.
-      costPriceSnapshot: Number(product.costPrice)||0
+      costPriceSnapshot: (Number(product.costPrice)||0) + picks.reduce((s,x)=>s+optionCostPerUnit(x.option),0)
     });
   }
   expandedProductId = null;
@@ -2810,6 +2830,19 @@ function cartConsumption(cart){
       cur.amount += line.qty;
       productNeeds.set(line.name, cur);
     }
+    // Обрані опції (соус, напій…) теж списують зі складу: рецепт → інгредієнт, продукт → товар.
+    (line.selectedOptions||[]).forEach(o=>{
+      if(!(o.amount>0)) return;
+      if(o.kind==='ingredient' && o.refId){
+        const cur = ingredientNeeds.get(o.refId) || { name: o.name, unit: o.unit, amount: 0 };
+        cur.amount += o.amount * line.qty;
+        ingredientNeeds.set(o.refId, cur);
+      } else if(o.kind==='product' && o.productName){
+        const cur = productNeeds.get(o.productName) || { unit: o.unit||null, amount: 0 };
+        cur.amount += o.amount * line.qty;
+        productNeeds.set(o.productName, cur);
+      }
+    });
   });
   return { ingredientNeeds, productNeeds };
 }
@@ -2999,7 +3032,7 @@ function orderProductsStep(){
         <div class="flex items-center justify-between" style="cursor:pointer">
           <div>
             <div class="font-semibold">${escapeHtml(p.name)}</div>
-            <div class="sub text-xs">${fmtMoney(p.price)}${p.modifier?' · '+escapeHtml(p.modifier.label):''}${!orderCategoryFilter?' · '+escapeHtml(catTag):''}</div>
+            <div class="sub text-xs">${fmtMoney(p.price)}${p.modifier?' · '+escapeHtml(p.modifier.label):''}${(p.optionGroups||[]).length?' · '+(p.optionGroups||[]).map(g=>escapeHtml(g.label)).join(', '):''}${!orderCategoryFilter?' · '+escapeHtml(catTag):''}</div>
           </div>
           <div class="icon-badge" style="background:var(--card3)">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -3008,7 +3041,41 @@ function orderProductsStep(){
       </div>
     `);
     const head = row.querySelector('div.flex');
-    if(p.modifier && p.modifier.options && p.modifier.options.length){
+    const groups = (p.optionGroups||[]).filter(g=>(g.options||[]).length);
+    if(groups.length){
+      head.onclick = ()=>{ expandedProductId = isExpanded ? null : p.id; optionPicks = {}; render(); };
+      if(isExpanded){
+        const panel = el(`<div class="mt-3 pt-3" style="border-top:1px solid #2a2b31"></div>`);
+        const addBtn = el(`<button class="btn-solid w-full py-2.5 mt-1">Додати</button>`);
+        const updateAdd = ()=>{
+          const ready = groups.every(g=>optionPicks[g.id]);
+          addBtn.disabled = !ready; addBtn.style.opacity = ready ? '1' : '.5';
+        };
+        groups.forEach(g=>{
+          panel.appendChild(el(`<div class="sub text-xs mb-2">${escapeHtml(g.label)}</div>`));
+          const rowOpts = el(`<div class="flex flex-wrap gap-2 mb-3"></div>`);
+          const btns = {};
+          const paint = ()=>{ Object.entries(btns).forEach(([id,b])=>{ const on = optionPicks[g.id]===id; b.style.background = on ? 'var(--accent)' : 'var(--card3)'; b.style.color = on ? '#fff' : 'var(--text)'; }); };
+          g.options.forEach(o=>{
+            const d = Number(o.priceDelta)||0;
+            const b = el(`<button style="border:none;border-radius:999px;padding:8px 14px;font-size:.85rem;background:var(--card3);color:var(--text)">${escapeHtml(o.name)}${d?' +'+fmtMoney(d):''}</button>`);
+            b.onclick = (e)=>{ e.stopPropagation(); optionPicks[g.id] = o.id; paint(); updateAdd(); };
+            btns[o.id] = b; rowOpts.appendChild(b);
+          });
+          panel.appendChild(rowOpts);
+        });
+        addBtn.onclick = (e)=>{
+          e.stopPropagation();
+          if(!groups.every(g=>optionPicks[g.id])) return;
+          const picks = groups.map(g=>({ group:g, option:g.options.find(o=>o.id===optionPicks[g.id]) }));
+          optionPicks = {};
+          addToCart(p, null, picks);
+        };
+        panel.appendChild(addBtn);
+        updateAdd();
+        row.appendChild(panel);
+      }
+    } else if(p.modifier && p.modifier.options && p.modifier.options.length){
       head.onclick = ()=>{ expandedProductId = isExpanded ? null : p.id; render(); };
       if(isExpanded){
         const opts = el(`<div class="mt-3 pt-3" style="border-top:1px solid #2a2b31"></div>`);
@@ -6452,6 +6519,7 @@ function menuSettingsView(){
             <div class="font-medium">${escapeHtml(p.name)} ${p.type==='dish'?'<span class="sub" style="font-size:.65rem">· страва</span>':''}</div>
             <div class="sub text-xs">Ціна: ${fmtMoney(p.price)} · Собівартість: ${fmtMoney(p.costPrice||0)} · Маржа: ${fmtMoney(margin)}${!menuCategoryFilter?' · '+escapeHtml(catTag):''}</div>
             ${p.modifier?`<div class="sub text-xs">${escapeHtml(p.modifier.label)}: ${p.modifier.options.map(o=>escapeHtml(o.name)).join(', ')}</div>`:''}
+            ${(p.optionGroups||[]).map(g=>`<div class="sub text-xs">${escapeHtml(g.label)}: ${(g.options||[]).map(o=>escapeHtml(o.name)).join(', ')}</div>`).join('')}
           </div>
           <div class="flex items-center gap-2">
             <button data-edit class="navicon-btn" style="background:var(--card3);width:32px;height:32px">${ICONS.edit}</button>
@@ -6628,6 +6696,85 @@ function productAddView(){
 
   refreshTypeUI();
 
+  // --- Опції (вибір): групи на кшталт «Соус», «Напій» — касир обирає одну опцію з кожної групи ---
+  let draftGroups = editing ? (editing.optionGroups||[]).map(g=>({ ...g, options:(g.options||[]).map(o=>({...o})) })) : [];
+  wrap.appendChild(el(`<div class="font-semibold text-sm mb-1 mt-2">Опції на вибір</div>`));
+  wrap.appendChild(el(`<div class="sub text-xs mb-2">Наприклад, група «Соус»: сирний / часниковий, або «Напій» для комбо. Опція може списувати рецепт (соус) чи продукт зі складу (напій) і мати доплату.</div>`));
+  const groupsHost = el(`<div class="mb-2"></div>`);
+  wrap.appendChild(groupsHost);
+  const unitOfProduct = (name)=>{ const pr = allProductNames().find(x=>x.name===name); return pr ? pr.unit : ''; };
+  function renderGroups(){
+    groupsHost.innerHTML = '';
+    draftGroups.forEach(g=>{
+      const card = el(`<div class="card p-3 mb-3"></div>`);
+      const head = el(`<div class="flex items-center justify-between mb-2"><div class="font-semibold text-sm">${escapeHtml(g.label)}</div><button data-rmg style="background:none;border:none;color:var(--danger);font-size:1.1rem;padding:0 4px;cursor:pointer">&times;</button></div>`);
+      head.querySelector('[data-rmg]').onclick = ()=>{ draftGroups = draftGroups.filter(x=>x.id!==g.id); renderGroups(); };
+      card.appendChild(head);
+      if(g.options.length===0) card.appendChild(el(`<div class="sub text-xs mb-2">Ще немає варіантів</div>`));
+      g.options.forEach(o=>{
+        const eff = o.kind==='none' ? 'без списання' : ('спише '+fmt(o.amount)+' '+escapeHtml(o.unit||'')+' '+escapeHtml(o.kind==='ingredient'?o.name:(o.productName||'')));
+        const orow = el(`<div class="flex items-center justify-between mb-1"><div><div class="text-sm">${escapeHtml(o.name)}${o.priceDelta?' <span class="sub">+'+fmtMoney(o.priceDelta)+'</span>':''}</div><div class="sub text-xs">${eff}</div></div><button data-rmo style="background:none;border:none;color:var(--danger);font-size:1rem;padding:0 4px;cursor:pointer">&times;</button></div>`);
+        orow.querySelector('[data-rmo]').onclick = ()=>{ g.options = g.options.filter(x=>x.id!==o.id); renderGroups(); };
+        card.appendChild(orow);
+      });
+      // додавання варіанта
+      let kind = 'ingredient';
+      const addBox = el(`<div class="mt-2 pt-2" style="border-top:1px solid #2a2b31"></div>`);
+      const kindHost = el(`<div></div>`);
+      const refHost = el(`<div class="mb-2"></div>`);
+      const nameIn = el(`<input type="text" placeholder="Назва варіанта (необов'язково — візьметься зі списку)" class="w-full py-2.5 px-3 mb-2" style="border-radius:10px;background:var(--card2);color:var(--text);border:none">`);
+      const row2 = el(`<div class="flex gap-2 mb-2"><input data-amt type="text" inputmode="decimal" placeholder="Скільки списати" class="flex-1 py-2.5 px-3" style="border-radius:10px;background:var(--card2);color:var(--text);border:none"><input data-dl type="text" inputmode="decimal" placeholder="Доплата, ₴" class="flex-1 py-2.5 px-3" style="border-radius:10px;background:var(--card2);color:var(--text);border:none"></div>`);
+      const addO = el(`<button class="btn-line w-full py-2">+ Додати варіант</button>`);
+      let refSel = null;
+      const buildRef = ()=>{
+        refHost.innerHTML = '';
+        row2.querySelector('[data-amt]').style.display = kind==='none' ? 'none' : '';
+        if(kind==='none'){ refSel = null; return; }
+        const opts = kind==='ingredient'
+          ? availableRecipes().map(r=>({value:r.id, label:r.name+' ('+r.unit+')'}))
+          : allProductNames().map(x=>({value:x.name, label:x.name+' ('+x.unit+')'}));
+        if(opts.length===0){ refSel = null; refHost.appendChild(el(`<div class="sub text-xs">${kind==='ingredient'?'Ще немає рецептів — створіть у «Рецептах».':'Ще немає продуктів на складі.'}</div>`)); return; }
+        refSel = customSelect(opts, null, null);
+        refHost.appendChild(refSel);
+      };
+      const kindRow = segmentedPicker([['ingredient','Рецепт','🥣'],['product','Продукт','📦'],['none','Без списання','➖']], kind, (k)=>{ kind = k; buildRef(); });
+      kindHost.appendChild(kindRow);
+      buildRef();
+      addO.onclick = ()=>{
+        const amount = parseFloat((row2.querySelector('[data-amt]').value||'').replace(',','.')) || 0;
+        const priceDelta = parseFloat((row2.querySelector('[data-dl]').value||'').replace(',','.')) || 0;
+        let opt = { id: uid(), name: nameIn.value.trim(), kind, refId:null, productName:null, unit:'', amount:0, priceDelta };
+        if(kind==='ingredient'){
+          const ing = refSel && availableRecipes().find(r=>r.id===refSel.getValue());
+          if(!ing){ appAlert('Оберіть рецепт'); return; }
+          if(amount<=0){ appAlert('Вкажіть, скільки списувати'); return; }
+          opt.refId = ing.id; opt.unit = ing.unit; opt.amount = amount; if(!opt.name) opt.name = ing.name;
+        } else if(kind==='product'){
+          const pn = refSel && refSel.getValue();
+          if(!pn){ appAlert('Оберіть продукт'); return; }
+          if(amount<=0){ appAlert('Вкажіть, скільки списувати'); return; }
+          opt.productName = pn; opt.unit = unitOfProduct(pn); opt.amount = amount; if(!opt.name) opt.name = pn;
+        } else if(!opt.name){ appAlert('Вкажіть назву варіанта'); return; }
+        g.options.push(opt);
+        renderGroups();
+      };
+      addBox.appendChild(kindHost); addBox.appendChild(refHost); addBox.appendChild(nameIn); addBox.appendChild(row2); addBox.appendChild(addO);
+      card.appendChild(addBox);
+      groupsHost.appendChild(card);
+    });
+  }
+  renderGroups();
+  const addGroupRow = el(`<div class="flex gap-2 mb-5"><input type="text" placeholder="Нова група, напр. Соус або Напій" class="flex-1 py-2.5 px-3" style="border-radius:10px;background:var(--card3);color:var(--text);border:none"><button class="btn-line" style="padding:0 16px">+ Група</button></div>`);
+  addGroupRow.querySelector('button').onclick = ()=>{
+    const inp = addGroupRow.querySelector('input');
+    const label = inp.value.trim();
+    if(!label){ appAlert('Вкажіть назву групи'); return; }
+    draftGroups.push({ id: uid(), label, options: [] });
+    inp.value = '';
+    renderGroups();
+  };
+  wrap.appendChild(addGroupRow);
+
   const err = el(`<div class="text-sm mb-3" style="color:var(--danger);min-height:1.2em"></div>`);
   wrap.appendChild(err);
 
@@ -6658,7 +6805,9 @@ function productAddView(){
     } else {
       costPrice = parseFloat((costPriceInput.value||'').replace(',','.')) || 0;
     }
-    const data = { name, category: draftCategory, type: draftType, ingredients: draftIngredients, costPrice, price, modifier: null };
+    const emptyG = draftGroups.find(g=>g.options.length===0);
+    if(emptyG){ err.textContent = 'У групі «'+emptyG.label+'» немає жодного варіанта — додайте або видаліть її'; return; }
+    const data = { name, category: draftCategory, type: draftType, ingredients: draftIngredients, costPrice, price, modifier: null, optionGroups: draftGroups };
     if(editing) updateProduct(editing.id, data);
     else addProduct(data);
     editingProductId = null;
