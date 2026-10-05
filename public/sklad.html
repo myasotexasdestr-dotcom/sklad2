@@ -343,6 +343,8 @@ let menuAddDefaultCategory = 'fastfood'; // категорія, в яку пот
 let editingLocationId = null;
 let editingIngredientId = null;
 let preparingIngredientId = null;
+let prepareReturnTo = 'ingredients';
+function openPrepare(ingId, returnTo){ preparingIngredientId = ingId||null; prepareReturnTo = returnTo||view||'ingredients'; view='ingredientPrepare'; render(); }
 let editingWarehouseId = null;
 let warehouseEditReturnTo = 'stock'; // 'stock' | 'settings' — де відкрили редагування складу, туди й повертаємось
 let editingStockItemId = null;
@@ -3243,16 +3245,19 @@ function ingredientsView(){
       <button id="igBack" class="navicon-btn" style="background:var(--card3)">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
-      <div class="font-bold" style="font-size:1.1rem">Інгредієнти</div>
+      <div class="font-bold" style="font-size:1.1rem">Рецепти</div>
     </div>
   `);
   topBar.querySelector('#igBack').onclick = ()=>{ view = isOwner() ? 'settings' : 'stock'; render(); };
   wrap.appendChild(topBar);
   const curWhName = (state.warehouses.find(w=>w.id===state.currentWarehouse)||{}).name || '';
-  wrap.appendChild(el(`<div class="sub text-xs mb-4">За замовчуванням спільні для всіх складів; показано доступні для складу «${escapeHtml(curWhName)}», залишки «Наявно» — теж по ньому. Щоб перевірити інший склад, перемкніть його на вкладці «Залишки». Використовується при створенні страв у меню.</div>`));
+  wrap.appendChild(el(`<div class="sub text-xs mb-4">За замовчуванням спільні для всіх складів; показано доступні для складу «${escapeHtml(curWhName)}», залишки «Наявно» — теж по ньому. Щоб перевірити інший склад, перемкніть його на вкладці «Залишки». Рецепт задає, з яких продуктів робиться заготовка; «Нова заготовка» списує продукти зі складу й додає готове. Також використовується при створенні страв у меню.</div>`));
 
   if(canManageIngredients()){
-    const addBtn = el(`<button class="w-full btn-line py-3 mb-4">+ Додати інгредієнт</button>`);
+    const newPrepBtn = el(`<button class="w-full btn-solid py-3 mb-2">Нова заготовка</button>`);
+    newPrepBtn.onclick = ()=> openPrepare(null, 'ingredients');
+    wrap.appendChild(newPrepBtn);
+    const addBtn = el(`<button class="w-full btn-line py-3 mb-4">+ Додати рецепт</button>`);
     addBtn.onclick = ()=>{ editingIngredientId=null; view='ingredientAdd'; render(); };
     wrap.appendChild(addBtn);
   }
@@ -3285,7 +3290,7 @@ function ingredientsView(){
     `);
     if(!manage){ wrap.appendChild(row); return; }
     const prepBtn = row.querySelector('[data-prep]');
-    if(prepBtn) prepBtn.onclick = (e)=>{ e.stopPropagation(); preparingIngredientId = ing.id; view='ingredientPrepare'; render(); };
+    if(prepBtn) prepBtn.onclick = (e)=>{ e.stopPropagation(); openPrepare(ing.id, 'ingredients'); };
     row.addEventListener('click', (e)=>{
       if(e.target.closest('[data-del]') || e.target.closest('[data-prep]')) return;
       editingIngredientId = ing.id;
@@ -3303,18 +3308,37 @@ function ingredientsView(){
 function ingredientPrepareView(){
   const ing = state.recipeIngredients.find(i=>i.id===preparingIngredientId);
   const wrap = el(`<div></div>`);
-  const back = ()=>{ preparingIngredientId=null; view='ingredients'; render(); };
+  const back = ()=>{ preparingIngredientId=null; view=prepareReturnTo||'ingredients'; render(); };
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="ppBack" class="navicon-btn" style="background:var(--card3)">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
-      <div class="font-bold" style="font-size:1.1rem">Заготовка${ing?': '+escapeHtml(ing.name):''}</div>
+      <div class="font-bold" style="font-size:1.1rem">${ing?'Заготовка: '+escapeHtml(ing.name):'Нова заготовка'}</div>
     </div>
   `);
   topBar.querySelector('#ppBack').onclick = back;
   wrap.appendChild(topBar);
-  if(!ing){ wrap.appendChild(el(`<div class="sub text-center py-10">Інгредієнт не знайдено</div>`)); return wrap; }
+  if(!ing){
+    // Крок 1: вибір рецепта. Рецепт = інгредієнт зі складом з продуктів («Рецепти» в налаштуваннях).
+    const recipes = availableRecipeIngredients().filter(r=>(r.components||[]).length).sort((a,b)=>a.name.localeCompare(b.name,'uk'));
+    if(recipes.length===0){
+      wrap.appendChild(el(`<div class="sub text-center py-8">Ще немає рецептів. Створіть рецепт у розділі «Рецепти» — вкажіть, з яких продуктів він складається.</div>`));
+      const goBtn = el(`<button class="w-full btn-line py-3">Перейти до рецептів</button>`);
+      goBtn.onclick = ()=>{ view='ingredients'; render(); };
+      wrap.appendChild(goBtn);
+      return wrap;
+    }
+    wrap.appendChild(el(`<div class="sub text-xs mb-2">Оберіть рецепт — підтягнуться продукти, які потрібні для нього.</div>`));
+    const sel = customSelect(recipes.map(r=>({value:r.id, label:r.name+' ('+r.unit+')'})), null, null);
+    const selHost = el(`<div class="mb-4"></div>`);
+    selHost.appendChild(sel);
+    wrap.appendChild(selHost);
+    const nextBtn = el(`<button class="w-full btn-solid py-3">Далі</button>`);
+    nextBtn.onclick = ()=>{ preparingIngredientId = sel.getValue(); render(); };
+    wrap.appendChild(nextBtn);
+    return wrap;
+  }
 
   const whId = state.currentWarehouse;
   const whName = (state.warehouses.find(w=>w.id===whId)||{}).name || '';
@@ -3390,7 +3414,7 @@ function ingredientPrepareView(){
     const res = recordPreparation(ing, parse(outInput.value), used, whId);
     if(!res.ok){ appAlert(res.error); return; }
     saveState();
-    preparingIngredientId = null; view = 'ingredients';
+    preparingIngredientId = null; view = prepareReturnTo || 'ingredients';
     render();
   };
   wrap.appendChild(saveBtn);
@@ -3572,7 +3596,7 @@ function stockView(){
           // до самої форми поставки — власник (тут цієї кнопки й не буває) поза цим сценарієм.
           transferBtn.onclick = ()=>{ view = (u && u.role==='prep') ? 'prepTransferLocations' : 'transferStart'; render(); };
           actRow.appendChild(transferBtn);
-          const ingBtn = el(`<button class="text-sm font-semibold" style="color:var(--accent)">Інгредієнти</button>`);
+          const ingBtn = el(`<button class="text-sm font-semibold" style="color:var(--accent)">Рецепти</button>`);
           ingBtn.onclick = ()=>{ view='ingredients'; render(); };
           actRow.appendChild(ingBtn);
         }
@@ -5782,7 +5806,10 @@ function prepDashboardView(){
   const u = curUser();
   renderTasksSection(wrap, u ? u.id : null);
 
-  const ingBtn = el(`<button class="w-full btn-outline py-3 mt-4">Інгредієнти</button>`);
+  const prepNewBtn = el(`<button class="w-full btn-solid py-3 mt-4">Нова заготовка</button>`);
+  prepNewBtn.onclick = ()=> openPrepare(null, view);
+  wrap.appendChild(prepNewBtn);
+  const ingBtn = el(`<button class="w-full btn-outline py-3 mt-2">Рецепти</button>`);
   ingBtn.onclick = ()=>{ view='ingredients'; render(); };
   wrap.appendChild(ingBtn);
 
@@ -5845,7 +5872,8 @@ function settingsView(){
     { label: 'Меню і ціни', icon: 'tag', action: ()=>{ view='menu'; render(); } },
     { label: 'Історія закупівель', icon: 'receipt', action: ()=> appAlert('Цей розділ ще в розробці') },
     { label: 'Поставки', icon: 'transfer', action: ()=>{ view='transferList'; render(); } },
-    { label: 'Інгредієнти', icon: 'leaf', action: ()=>{ view='ingredients'; render(); } },
+    { label: 'Рецепти', icon: 'leaf', action: ()=>{ view='ingredients'; render(); } },
+    { label: 'Нова заготовка', icon: 'flame', action: ()=> openPrepare(null, 'settings') },
     { label: 'Нова готовка', icon: 'flame', action: ()=>{ view='productionStart'; render(); } },
     { label: 'Зв\'язки готовки', icon: 'link', action: ()=>{ view='productionLinks'; render(); } },
     { label: 'Аналітика', icon: 'dashboard', action: ()=>{ view='analytics'; render(); } },
