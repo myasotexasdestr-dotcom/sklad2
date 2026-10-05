@@ -724,6 +724,7 @@ function addRecipeIngredient(data){
     components: data.components,
     warehouseId: data.warehouseId || null
   };
+  if(data.isRecipe) ing.isRecipe = true;
   state.recipeIngredients.push(ing);
   if(data.qty!==undefined && Number(data.qty)>0) setIngredientQty(ing.id, data.qtyWarehouseId || ingredientBaseWarehouseId(), data.qty);
   saveState(); render();
@@ -741,6 +742,7 @@ function updateRecipeIngredient(id, data){
   ing.yieldAmount = Number(data.yieldAmount)||1;
   ing.components = data.components;
   ing.warehouseId = data.warehouseId || null;
+  if(data.isRecipe) ing.isRecipe = true;
   if(data.qty!==undefined){
     const newQty = Number(data.qty)||0;
     const curQty = curIngredientQty(ing);
@@ -753,14 +755,9 @@ function availableRecipeIngredients(){
   return state.recipeIngredients.filter(i=>!i.warehouseId || i.warehouseId===state.currentWarehouse);
 }
 
-// «Справжній» рецепт — складається з 2+ продуктів, або з одного, але називається інакше (напр. «М'ясо BBQ»).
-// Інгредієнти 1:1 (7up з продукту 7up, Борошно з Борошна) — це просто продукти для страв, у «Рецептах» їх не показуємо.
-function isRealRecipe(ing){
-  const comps = ing.components||[];
-  if(comps.length===0) return false;
-  if(comps.length>=2) return true;
-  return String(comps[0].productName||'').trim().toLowerCase() !== String(ing.name||'').trim().toLowerCase();
-}
+// Рецепт — тільки те, що створено в розділі «Рецепти» (прапорець isRecipe). Інгредієнти 1:1 з продуктів
+// (7up, Борошно…) — це просто продукти для страв, у «Рецептах» їх не показуємо.
+function isRealRecipe(ing){ return !!ing.isRecipe && (ing.components||[]).length>0; }
 function availableRecipes(){ return availableRecipeIngredients().filter(isRealRecipe); }
 
 // ---- Закупівля: поповнення складу ззовні (не з іншого складу, як поставка, а "з нуля"), для
@@ -3261,7 +3258,7 @@ function ingredientsView(){
   topBar.querySelector('#igBack').onclick = ()=>{ view = isOwner() ? 'settings' : 'stock'; render(); };
   wrap.appendChild(topBar);
   const curWhName = (state.warehouses.find(w=>w.id===state.currentWarehouse)||{}).name || '';
-  wrap.appendChild(el(`<div class="sub text-xs mb-4">За замовчуванням спільні для всіх складів; показано доступні для складу «${escapeHtml(curWhName)}», залишки «Наявно» — теж по ньому. Щоб перевірити інший склад, перемкніть його на вкладці «Залишки». Рецепт задає, з яких продуктів робиться заготовка; «Нова заготовка» списує продукти зі складу й додає готове. Також використовується при створенні страв у меню.</div>`));
+  wrap.appendChild(el(`<div class="sub text-xs mb-4">За замовчуванням спільні для всіх складів; показано доступні для складу «${escapeHtml(curWhName)}», залишки «Наявно» — теж по ньому. Щоб перевірити інший склад, перемкніть його на вкладці «Залишки». <span style="opacity:.6">v2026-10-05.4</span> · Рецепт задає, з яких продуктів робиться заготовка; «Нова заготовка» списує продукти зі складу й додає готове. Також використовується при створенні страв у меню.</div>`));
 
   if(canManageIngredients()){
     const newPrepBtn = el(`<button class="w-full btn-solid py-3 mb-2">Нова заготовка</button>`);
@@ -5634,7 +5631,7 @@ function ingredientAddView(){
     if(draftComponents.length===0){ err.textContent = 'Додайте хоча б один продукт — з нього рахується собівартість'; return; }
     const yieldAmount = parseFloat((yieldInput.value||'').replace(',','.')) || 1;
     const qty = parseFloat((qtyInput.value||'').replace(',','.')) || 0;
-    const data = { name, unit: draftUnit, yieldAmount, components: draftComponents, warehouseId: availOne ? availWhId : null, qty };
+    const data = { name, unit: draftUnit, yieldAmount, components: draftComponents, warehouseId: availOne ? availWhId : null, qty, isRecipe: true };
 
     if(editing) updateRecipeIngredient(editing.id, data);
     else addRecipeIngredient(data);
