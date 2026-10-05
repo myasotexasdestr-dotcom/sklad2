@@ -3260,10 +3260,13 @@ function ingredientsView(){
   const curWhName = (state.warehouses.find(w=>w.id===state.currentWarehouse)||{}).name || '';
   wrap.appendChild(el(`<div class="sub text-xs mb-4">За замовчуванням спільні для всіх складів; показано доступні для складу «${escapeHtml(curWhName)}», залишки «Наявно» — теж по ньому. Щоб перевірити інший склад, перемкніть його на вкладці «Залишки». <span style="opacity:.6">v2026-10-05.4</span> · Рецепт задає, з яких продуктів робиться заготовка; «Нова заготовка» списує продукти зі складу й додає готове. Також використовується при створенні страв у меню.</div>`));
 
-  if(canManageIngredients()){
+  if(canProduce()){
     const newPrepBtn = el(`<button class="w-full btn-solid py-3 mb-2">Нова заготовка</button>`);
     newPrepBtn.onclick = ()=> openPrepare(null, 'ingredients');
     wrap.appendChild(newPrepBtn);
+  }
+  // Створювати, редагувати й видаляти рецепти може тільки власник; заготівельник лише готує за ними.
+  if(isOwner()){
     const addBtn = el(`<button class="w-full btn-line py-3 mb-4">+ Додати рецепт</button>`);
     addBtn.onclick = ()=>{ editingIngredientId=null; view='ingredientAdd'; render(); };
     wrap.appendChild(addBtn);
@@ -3275,7 +3278,8 @@ function ingredientsView(){
     return wrap;
   }
   const showCost = canSeeCost();
-  const manage = canManageIngredients();
+  const manage = isOwner();
+  const canPrep = canProduce();
   visible.slice().sort((a,b)=>a.name.localeCompare(b.name,'uk')).forEach(ing=>{
     const cost = ingredientCostPerUnit(ing);
     const qty = curIngredientQty(ing);
@@ -3289,15 +3293,15 @@ function ingredientsView(){
           <div class="sub text-xs">Наявно: ${fmt(qty)} ${escapeHtml(ing.unit)}</div>
           ${costLine}
         </div>
-        ${manage ? `<div class="flex items-center gap-2">
-          ${(ing.components||[]).length ? `<button data-prep class="btn-line" style="padding:6px 12px;font-size:.8rem">Приготувати</button>` : ''}
-          <button data-del style="background:none;border:none;color:var(--danger);font-size:1.3rem;padding:0 4px;cursor:pointer">&times;</button>
+        ${(canPrep || manage) ? `<div class="flex items-center gap-2">
+          ${canPrep ? `<button data-prep class="btn-line" style="padding:6px 12px;font-size:.8rem">Приготувати</button>` : ''}
+          ${manage ? `<button data-del style="background:none;border:none;color:var(--danger);font-size:1.3rem;padding:0 4px;cursor:pointer">&times;</button>` : ''}
         </div>` : ''}
       </div>
     `);
-    if(!manage){ wrap.appendChild(row); return; }
     const prepBtn = row.querySelector('[data-prep]');
     if(prepBtn) prepBtn.onclick = (e)=>{ e.stopPropagation(); openPrepare(ing.id, 'ingredients'); };
+    if(!manage){ wrap.appendChild(row); return; }
     row.addEventListener('click', (e)=>{
       if(e.target.closest('[data-del]') || e.target.closest('[data-prep]')) return;
       editingIngredientId = ing.id;
