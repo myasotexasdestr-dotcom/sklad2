@@ -6764,26 +6764,24 @@ function productAddView(){
       const head = el(`<div class="flex items-center justify-between mb-2"><div class="font-semibold text-sm">${escapeHtml(sl.label)}</div><button data-rms style="background:none;border:none;color:var(--danger);font-size:1.1rem;padding:0 4px;cursor:pointer">&times;</button></div>`);
       head.querySelector('[data-rms]').onclick = ()=>{ draftSlots = draftSlots.filter(x=>x.id!==sl.id); renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2); };
       card.appendChild(head);
-      if(sl.productIds.length===0) card.appendChild(el(`<div class="sub text-xs mb-2">Ще немає позицій</div>`));
-      sl.productIds.forEach(pid=>{
-        const pr = state.products.find(x=>x.id===pid);
-        const r = el(`<div class="flex items-center justify-between mb-1"><div class="text-sm">${escapeHtml(pr?pr.name:'(видалено)')}</div><button data-rmp style="background:none;border:none;color:var(--danger);font-size:1rem;padding:0 4px;cursor:pointer">&times;</button></div>`);
-        r.querySelector('[data-rmp]').onclick = ()=>{ sl.productIds = sl.productIds.filter(x=>x!==pid); renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2); };
-        card.appendChild(r);
-      });
-      const cands = comboCandidates().filter(x=>!sl.productIds.includes(x.id));
-      const addBox = el(`<div class="flex gap-2 items-start mt-2"><div data-sel style="flex:1"></div><button class="btn-line" style="padding:10px 14px">+ Додати</button></div>`);
+      // Усі позиції меню — кнопками: натисніть, щоб додати в слот чи прибрати.
+      const cands = comboCandidates();
       if(cands.length===0){
-        addBox.innerHTML = '<div class="sub text-xs">Немає інших позицій меню для додавання.</div>';
+        card.appendChild(el(`<div class="sub text-xs">У меню ще немає інших позицій — спершу додайте їх.</div>`));
       } else {
-        const sel = customSelect(cands.map(x=>({value:x.id, label:x.name})), null, null);
-        addBox.querySelector('[data-sel]').appendChild(sel);
-        addBox.querySelector(':scope > button').onclick = ()=>{
-          const id = sel.getValue(); if(!id) return;
-          sl.productIds.push(id); renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2);
-        };
+        card.appendChild(el(`<div class="sub text-xs mb-2">Натисніть на позиції, з яких можна обирати в цьому слоті:</div>`));
+        const chips = el(`<div class="flex flex-wrap gap-2"></div>`);
+        cands.forEach(x=>{
+          const on = sl.productIds.includes(x.id);
+          const b = el(`<button type="button" style="border:none;border-radius:999px;padding:8px 14px;font-size:.85rem;background:${on?'var(--accent)':'var(--card3)'};color:${on?'#fff':'var(--text)'}">${on?'✓ ':''}${escapeHtml(x.name)}</button>`);
+          b.onclick = ()=>{
+            sl.productIds = on ? sl.productIds.filter(id=>id!==x.id) : sl.productIds.concat([x.id]);
+            renderSlots(); costPriceInput.value = comboAvgCost().toFixed(2);
+          };
+          chips.appendChild(b);
+        });
+        card.appendChild(chips);
       }
-      card.appendChild(addBox);
       slotsHost.appendChild(card);
     });
   }
