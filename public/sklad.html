@@ -753,6 +753,16 @@ function availableRecipeIngredients(){
   return state.recipeIngredients.filter(i=>!i.warehouseId || i.warehouseId===state.currentWarehouse);
 }
 
+// «Справжній» рецепт — складається з 2+ продуктів, або з одного, але називається інакше (напр. «М'ясо BBQ»).
+// Інгредієнти 1:1 (7up з продукту 7up, Борошно з Борошна) — це просто продукти для страв, у «Рецептах» їх не показуємо.
+function isRealRecipe(ing){
+  const comps = ing.components||[];
+  if(comps.length===0) return false;
+  if(comps.length>=2) return true;
+  return String(comps[0].productName||'').trim().toLowerCase() !== String(ing.name||'').trim().toLowerCase();
+}
+function availableRecipes(){ return availableRecipeIngredients().filter(isRealRecipe); }
+
 // ---- Закупівля: поповнення складу ззовні (не з іншого складу, як поставка, а "з нуля"), для
 // продуктів (М'ясо/Фастфуд) і готових інгредієнтів разом. ----
 // Унікальний каталог того, що можна закупити: продукти (за унікальною назвою — незалежно від того,
@@ -3262,9 +3272,9 @@ function ingredientsView(){
     wrap.appendChild(addBtn);
   }
 
-  const visible = availableRecipeIngredients();
+  const visible = availableRecipes();
   if(visible.length===0){
-    wrap.appendChild(el(`<div class="sub text-center py-10">Поки немає інгредієнтів</div>`));
+    wrap.appendChild(el(`<div class="sub text-center py-10">Поки немає рецептів</div>`));
     return wrap;
   }
   const showCost = canSeeCost();
@@ -3321,7 +3331,7 @@ function ingredientPrepareView(){
   wrap.appendChild(topBar);
   if(!ing){
     // Крок 1: вибір рецепта. Рецепт = інгредієнт зі складом з продуктів («Рецепти» в налаштуваннях).
-    const recipes = availableRecipeIngredients().filter(r=>(r.components||[]).length).sort((a,b)=>a.name.localeCompare(b.name,'uk'));
+    const recipes = availableRecipes().sort((a,b)=>a.name.localeCompare(b.name,'uk'));
     if(recipes.length===0){
       wrap.appendChild(el(`<div class="sub text-center py-8">Ще немає рецептів. Створіть рецепт у розділі «Рецепти» — вкажіть, з яких продуктів він складається.</div>`));
       const goBtn = el(`<button class="w-full btn-line py-3">Перейти до рецептів</button>`);
@@ -4975,7 +4985,7 @@ function productionStartView(){
   wrap.appendChild(el(`<div class="sub text-xs mb-4">Візьміть сировину зі складу «${escapeHtml((state.warehouses.find(w=>w.id===state.currentWarehouse)||{}).name||'')}», вкажіть втрати при обробці (якщо були) і який продукт отримаєте. Вагу готового продукту вкажете, коли готовка буде завершена.</div>`));
 
   // Готовка за рецептом: обираємо рецепт зі списку «Рецепти» — продукти підтягуються самі.
-  if(canProduce() && availableRecipeIngredients().some(r=>(r.components||[]).length)){
+  if(canProduce() && availableRecipes().length>0){
     const recipeBtn = el(`<button class="w-full btn-solid py-3 mb-2">Приготувати за рецептом</button>`);
     recipeBtn.onclick = ()=> openPrepare(null, 'productionStart');
     wrap.appendChild(recipeBtn);
