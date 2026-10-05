@@ -335,6 +335,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
+const APP_VERSION = '2026-10-05.9';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -3375,7 +3376,7 @@ function ingredientsView(){
   topBar.querySelector('#igBack').onclick = ()=>{ view = isOwner() ? 'settings' : 'stock'; render(); };
   wrap.appendChild(topBar);
   const curWhName = (state.warehouses.find(w=>w.id===state.currentWarehouse)||{}).name || '';
-  wrap.appendChild(el(`<div class="sub text-xs mb-4">За замовчуванням спільні для всіх складів; показано доступні для складу «${escapeHtml(curWhName)}», залишки «Наявно» — теж по ньому. Щоб перевірити інший склад, перемкніть його на вкладці «Залишки». <span style="opacity:.6">v2026-10-05.4</span> · Рецепт задає, з яких продуктів робиться заготовка; «Нова заготовка» списує продукти зі складу й додає готове. Також використовується при створенні страв у меню.</div>`));
+  wrap.appendChild(el(`<div class="sub text-xs mb-4">За замовчуванням спільні для всіх складів; показано доступні для складу «${escapeHtml(curWhName)}», залишки «Наявно» — теж по ньому. Щоб перевірити інший склад, перемкніть його на вкладці «Залишки». <span style="opacity:.6">v${APP_VERSION}</span> · Рецепт задає, з яких продуктів робиться заготовка; «Нова заготовка» списує продукти зі складу й додає готове. Також використовується при створенні страв у меню.</div>`));
 
   if(canProduce()){
     const newPrepBtn = el(`<button class="w-full btn-solid py-3 mb-2">Нова заготовка</button>`);
@@ -6753,7 +6754,7 @@ function productAddView(){
 
   // --- Комбо: слоти з готових позицій меню (бургер, картопля фрі, напій…) ---
   comboSection.appendChild(el(`<div class="font-semibold text-sm mb-1">З чого складається комбо</div>`));
-  comboSection.appendChild(el(`<div class="sub text-xs mb-2">Оберіть зі списку позиції меню (бургер, картопля, напій…) і додайте в комбо. Якщо касир має обирати між кількома (напр. різні напої) — додайте у слот ще варіанти. Собівартість — орієнтовна, а в продажу рахується за реально обраним.</div>`));
+  comboSection.appendChild(el(`<div class="sub text-xs mb-2"><span style="opacity:.6">v${APP_VERSION}</span> · Оберіть зі списку позиції меню (бургер, картопля, напій…) і додайте в комбо. Якщо касир має обирати між кількома (напр. різні напої) — додайте у слот ще варіанти. Собівартість — орієнтовна, а в продажу рахується за реально обраним.</div>`));
   const slotsHost = el(`<div class="mb-2"></div>`);
   comboSection.appendChild(slotsHost);
   const comboCandidates = ()=> state.products.filter(x=>x.type!=='combo' && (!editing || x.id!==editing.id)).sort((a,b)=>a.name.localeCompare(b.name,'uk'));
