@@ -227,6 +227,10 @@ function runMigrations(){
   // the recipe/cost definition), so the same ingredient can have a different amount in stock at each
   // warehouse (e.g. a batch of sauce made at "База" before being sent out as a "поставка").
   if(!state.ingredientStock) state.ingredientStock = [];
+  // Міграція: окремі залишки 1:1-інгредієнтів прибираємо — правдою є залишок продукту в stockItems.
+  if(state.recipeIngredients && state.ingredientStock.some(r=>linkedProductName(state.recipeIngredients.find(i=>i.id===r.ingredientId)))){
+    state.ingredientStock = state.ingredientStock.filter(r=>!linkedProductName(state.recipeIngredients.find(i=>i.id===r.ingredientId)));
+  }
   // Default warehouse: the one "Термінові закупки" on the dashboard is based on. Prefers one literally
   // named "База" (a central depot) if there is one, otherwise the first warehouse.
   if(!state.defaultWarehouseId){
@@ -426,7 +430,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.21';
+const APP_VERSION='2026-10-07.22';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -539,7 +543,7 @@ function curIngredientRows(){
     .filter(r=>r.warehouseId===state.currentWarehouse)
     .map(r=>{
       const ing = state.recipeIngredients.find(i=>i.id===r.ingredientId);
-      if(!ing) return null;
+      if(!ing || linkedProductName(ing)) return null; // 1:1 — це продукт, він у списку продуктів
       return { ingredientId: ing.id, name: ing.name, unit: ing.unit, qty: r.qty, costPerUnit: ingredientCostPerUnit(ing) };
     })
     .filter(Boolean);
@@ -617,7 +621,30 @@ function recalcMenuCosts(){
 function allowNegativeStock(){ return state.allowNegativeStock !== false; }
 
 // ---- On-hand ingredient stock per warehouse (see state.ingredientStock above) ----
+// «Інгредієнт 1:1» (7up, Борошно…) — не окремий залишок, а той самий продукт зі stockItems: його кількість
+// читається й змінюється просто в рядку продукту на цьому складі. Тому закупівля, готовка, інвентаризація,
+// списання й продаж страви працюють з ОДНИМ лічильником. Окремий ingredientStock — лише для справжніх
+// рецептів (соуси, заготовки), які виробляються «Заготовкою».
+function linkedProductName(ing){
+  if(!ing || ing.isRecipe) return null;
+  const c = ing.components||[];
+  if(c.length!==1 || Number(c[0].amount)!==1 || (Number(ing.yieldAmount)||1)!==1) return null;
+  return c[0].productName || null;
+}
+function linkedStockRow(ing, warehouseId, create){
+  const name = linkedProductName(ing);
+  if(!name) return null;
+  let row = stockRowByName(name, warehouseId);
+  if(!row && create){
+    const sib = stockRowsForProduct(name)[0];
+    row = { id: uid(), warehouseId, name, unit: (sib&&sib.unit)||ing.unit, qty: 0, min: 0, costPerUnit: sib?(sib.costPerUnit||0):0, category: (sib&&sib.category)||'meat' };
+    state.stockItems.push(row);
+  }
+  return row;
+}
 function ingredientQtyAt(ingredientId, warehouseId){
+  const lingr = state.recipeIngredients.find(i=>i.id===ingredientId);
+  if(linkedProductName(lingr)){ const row = linkedStockRow(lingr, warehouseId, false); return row ? row.qty : 0; }
   const rec = state.ingredientStock.find(r=>r.ingredientId===ingredientId && r.warehouseId===warehouseId);
   return rec ? rec.qty : 0;
 }
@@ -625,6 +652,8 @@ function ingredientBaseWarehouseId(){ return state.currentWarehouse; }
 function curIngredientQty(ing){ return ingredientQtyAt(ing.id, ingredientBaseWarehouseId()); }
 // Sets the on-hand quantity outright (used when the qty is edited directly on the ingredient form).
 function setIngredientQty(ingredientId, warehouseId, qty){
+  const lingr = state.recipeIngredients.find(i=>i.id===ingredientId);
+  if(linkedProductName(lingr)){ linkedStockRow(lingr, warehouseId, true).qty = Math.max(0, Number(qty)||0); return; }
   let rec = state.ingredientStock.find(r=>r.ingredientId===ingredientId && r.warehouseId===warehouseId);
   if(!rec){
     rec = { id: uid(), warehouseId, ingredientId, qty: 0 };
@@ -636,6 +665,7 @@ function setIngredientQty(ingredientId, warehouseId, qty){
 // history so it shows up in the existing "Історія" tab without a separate view). No save/render here,
 // so callers that touch several ingredients (like a transfer) can batch one save+render at the end.
 function recordIngredientChange(ing, warehouseId, delta, reason){
+  if(linkedProductName(ing)){ recordStockChange(linkedStockRow(ing, warehouseId, true), delta, reason); return; }
   let rec = state.ingredientStock.find(r=>r.ingredientId===ing.id && r.warehouseId===warehouseId);
   if(!rec){
     rec = { id: uid(), warehouseId, ingredientId: ing.id, qty: 0 };
@@ -922,7 +952,7 @@ function purchaseCandidates(){
     seen.add(i.name);
     products.push({ kind:'product', name:i.name, unit:i.unit, category:i.category||'meat', costPerUnit:i.costPerUnit||0, min:i.min||0 });
   });
-  const ingredients = state.recipeIngredients.map(i=>({ kind:'ingredient', id:i.id, name:i.name, unit:i.unit }));
+  const ingredients = state.recipeIngredients.filter(i=>!linkedProductName(i)).map(i=>({ kind:'ingredient', id:i.id, name:i.name, unit:i.unit }));
   return products.concat(ingredients);
 }
 // Знаходить (або, якщо на цьому складі товару з такою назвою ще нема, створює) рядок stockItems
