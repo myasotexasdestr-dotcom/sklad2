@@ -157,6 +157,7 @@ let saveInFlight = false;
 let saveQueuedAgain = false;
 let pollTimer = null;
 let lastSyncedJSON = null;
+let historyWhoOverride = null; // для проданих через Checkbox позицій — автор «Checkbox», а не той, на чиєму пристрої застосовано
 
 function loadLocalSession(){
   try{
@@ -281,6 +282,16 @@ function runMigrations(){
   // 0.2 за кожен "добре"). Рахується окремо для кожного 15-денного періоду (10-25 і 26-9) — власник
   // використовує це як множник бонусу.
   if(!state.shiftRatings) state.shiftRatings = [];
+  // Інтеграція Checkbox: зіставлення кас із локаціями, зв'язки позицій чека з меню (ключ позиції → id товару).
+  if(!state.checkbox) state.checkbox = {};
+  { const cb = state.checkbox;
+    if(!cb.registerMap) cb.registerMap = {};
+    if(!cb.itemMap) cb.itemMap = {};
+    if(!cb.goodsSeen) cb.goodsSeen = {};
+    if(!cb.registers) cb.registers = [];
+    if(cb.blockManual===undefined) cb.blockManual = true;
+    if(!cb.stats) cb.stats = { applied:0, unmappedLines:0, unmappedRegisters:0 };
+  }
 }
 runMigrations();
 
@@ -308,9 +319,12 @@ async function fetchStateFromServer(){
   lastSyncError = null;
   return true;
 }
-function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+let cbTimer = null;
+function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer = null; } if(cbTimer){ clearInterval(cbTimer); cbTimer = null; } }
 function startPolling(){
   stopPolling();
+  cbTimer = setInterval(()=>{ checkboxTick().catch(()=>{}); }, 20000);
+  setTimeout(()=>{ checkboxTick().catch(()=>{}); }, 3000);
   pollTimer = setInterval(async ()=>{
     if(!authToken || saveInFlight || saveDebounceTimer) return; // не тягнемо, поки є незбережені локальні зміни
     const r = await api('/api/state');
@@ -398,7 +412,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.11';
+const APP_VERSION='2026-10-07.12';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -615,7 +629,7 @@ function recordIngredientChange(ing, warehouseId, delta, reason){
   const u = curUser();
   state.history.unshift({
     id: uid(), ingredientId: ing.id, name: ing.name, unit: ing.unit,
-    delta, reason, ts: nowStr(), tsMs: Date.now(), warehouseId, who: u ? u.name : '-'
+    delta, reason, ts: nowStr(), tsMs: Date.now(), warehouseId, who: historyWhoOverride || (u ? u.name : '-')
   });
   if(state.history.length>300) state.history.pop();
 }
@@ -815,7 +829,7 @@ function recordStockChange(item, delta, reason){
     // currently open in "Залишки".
     id: uid(), stockItemId: item.id, name: item.name, unit: item.unit,
     delta, reason, ts: nowStr(), tsMs: Date.now(), warehouseId: item.warehouseId,
-    who: u ? u.name : '-'
+    who: historyWhoOverride || (u ? u.name : '-')
   });
   if(state.history.length>300) state.history.pop();
 }
@@ -2265,6 +2279,11 @@ function render(){
     navHost.appendChild(tabbar());
     return;
   }
+  if(view==='checkbox'){
+    app.appendChild(checkboxView());
+    navHost.appendChild(tabbar());
+    return;
+  }
   if(view==='productionLinks'){
     app.appendChild(productionLinksView());
     navHost.appendChild(tabbar());
@@ -2519,7 +2538,7 @@ function tabbar(){
       : (isPrep ? [['prepDashboard','dashboard'],['productionStart','flame'],['prepTransferLocations','transfer'],['myHistory','history']]
         : (isCashier ? [['stock','dashboard'],['purchase','purchase'],['scheduleCalendar','calendar'],['cashierRequest','transfer'],['myHistory','history']]
           : [['stock','stock'],['history','history']])));
-  let activeKey = (view==='menu' || view==='staffEdit' || view==='locationEdit' || view==='locationAdd' || view==='productAdd' || view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare' || view==='productionLinks' || view==='analytics' || view==='auditLog' || view==='shiftRatings' || view==='scheduleCalendar' || view==='scheduleDay' || view==='scheduleLocation' || view==='tasks' || view==='taskAdd') ? 'settings' : view;
+  let activeKey = (view==='menu' || view==='staffEdit' || view==='locationEdit' || view==='locationAdd' || view==='productAdd' || view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare' || view==='productionLinks' || view==='checkbox' || view==='analytics' || view==='auditLog' || view==='shiftRatings' || view==='scheduleCalendar' || view==='scheduleDay' || view==='scheduleLocation' || view==='tasks' || view==='taskAdd') ? 'settings' : view;
   if(view==='stockItemAdd' || view==='warehouseAdd' || view==='warehouseEdit' || view==='inventoryStart' || view==='inventoryDetail' || view==='writeOffStart' || view==='transferStart' || view==='transferReceive' || view==='productionStart' || view==='ingredientPrepare' || view==='productionDetail' || view==='prepTransferLocations' || view==='locationTransferNeeds') activeKey = isCook ? 'productionList' : 'stock';
   if(view==='shiftAccept' || view==='notifications' || view==='myRating') activeKey = homeView();
   if(!isOwner() && (view==='transferList')) activeKey = 'stock';
@@ -2989,6 +3008,10 @@ function locationTransferNeedsView(){
 
 // ==================== Флоу "Створити замовлення" ====================
 function startCreateOrder(){
+  if(state.checkbox && state.checkbox.enabled && state.checkbox.blockManual){
+    appAlert('Продажі беруться автоматично з чеків Checkbox — оформлюйте продаж на касі. (Ручне оформлення можна ввімкнути в Налаштування → Checkbox.)');
+    return;
+  }
   if(state.products.length===0){
     appAlert(isOwner() ? 'У меню ще немає товарів. Спочатку додайте їх: Налаштування → Меню.' : 'У меню ще немає товарів. Зверніться до власника.');
     if(isOwner()){ view = 'settings'; render(); }
@@ -6094,7 +6117,7 @@ function myHistoryView(){
     if(!t){ const sl = (state.sales||[]).find(x=>x.ts===o.ts && x.who===o.who && x.tsMs); t = sl ? sl.tsMs : 0; }
     return { kind:'order', tsMs: t||0, data:o };
   });
-  const stockItems = state.history.filter(h=> u && h.who===u.name && h.reason!=='Продаж').map(h=> ({ kind:'stock', tsMs: h.tsMs||0, data: h }));
+  const stockItems = state.history.filter(h=> u && h.who===u.name && h.reason!=='Продаж' && h.who!=='Checkbox').map(h=> ({ kind:'stock', tsMs: h.tsMs||0, data: h }));
   const eventItems = state.auditLog.filter(a=> u && a.who===u.name && a.type!=='writeoff').map(a=> ({ kind:'event', tsMs: a.tsMs||0, data: a }));
   const items = orderItems.concat(stockItems, eventItems).sort((a,b)=> b.tsMs - a.tsMs);
   if(items.length===0){
@@ -6313,6 +6336,258 @@ function openLocationEdit(id){
   render();
 }
 
+// =====================================================================================
+// Checkbox: продажі з фіскальних чеків (сервер тягне чеки, застосунок їх фіксує)
+// =====================================================================================
+let cbAwaiting = new Set(); // id чеків, застосованих тут і ще не підтверджених серверу
+let cbTickBusy = false;
+function cbReceiptApplied(id){
+  return (state.orders||[]).some(o=> o.checkboxId===id || String(o.checkboxId||'').startsWith(id+':'));
+}
+// Перетворює чек Checkbox на замовлення(я) + продаж(і) + списання зі складу. Повертає true, якщо щось застосовано.
+function applyCheckboxReceipt(r){
+  const cb = state.checkbox;
+  if(cbReceiptApplied(r.id)) return false;
+  let locationId = cb.registerMap[r.registerId];
+  if(!locationId || !state.locations.find(l=>l.id===locationId)){
+    locationId = state.locations[0] ? state.locations[0].id : null;
+    cb.stats.unmappedRegisters++;
+  }
+  const sign = r.isReturn ? -1 : 1;
+  const lines = r.goods.map(g=>{
+    cb.goodsSeen[g.key] = { name:g.name, code:g.code, price:g.price };
+    const pid = cb.itemMap[g.key];
+    const product = pid ? state.products.find(p=>p.id===pid) : null;
+    const base = { id: uid(), name: product ? product.name : g.name, checkboxName: g.name, price: g.price, qty: g.qty*sign,
+      modifierId:null, modifierName:null, selectedOptions:[], optionsCostSnapshot:0, optionKey:'', comboSelections:[] };
+    if(!product){ cb.stats.unmappedLines++; return Object.assign(base, { productId:null, productType:'unmapped', recipeSnapshot:[], costPriceSnapshot:0, unmapped:true, category:null }); }
+    const line = Object.assign(base, { productId: product.id, productType: product.type, category: product.category,
+      recipeSnapshot: product.type==='dish' ? (product.ingredients||[]).map(i=>({...i})) : [],
+      costPriceSnapshot: Number(product.costPrice)||0 });
+    if(product.type==='combo'){
+      // Що саме обрано в комбо, чек не знає — списуємо першу позицію кожного слота.
+      line.comboSelections = (product.comboSlots||[]).map(sl=>{
+        const sub = state.products.find(x=>x.id===(sl.productIds||[])[0]);
+        return sub ? { slotId:sl.id, slotLabel:sl.label, productId:sub.id, name:sub.name, productType:sub.type,
+          recipeSnapshot: sub.type==='dish' ? (sub.ingredients||[]).map(i=>({...i})) : [], selectedOptions:[] } : null;
+      }).filter(Boolean);
+    }
+    return line;
+  });
+  // Один чек = одне замовлення на категорію (категорія важлива для каси точки й зарплат).
+  const cats = {};
+  lines.forEach(l=>{ if(l.category) cats[l.category] = (cats[l.category]||0) + Math.abs(l.price*l.qty); });
+  const mainCat = Object.keys(cats).sort((a,b)=>cats[b]-cats[a])[0] || 'fastfood';
+  const groups = {};
+  lines.forEach(l=>{ const c = l.category || mainCat; (groups[c] = groups[c] || []).push(l); });
+  const catKeys = Object.keys(groups);
+  const d = new Date(r.ms || Date.now());
+  const ts = d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+  const dateKey = localDateKey(d);
+  historyWhoOverride = 'Checkbox';
+  try{
+    catKeys.forEach(cat=>{
+      const items = groups[cat];
+      const total = Number(items.reduce((s,l)=>s+l.price*l.qty,0).toFixed(2));
+      const oid = catKeys.length>1 ? r.id+':'+cat : r.id;
+      state.orders.push({ id: uid(), checkboxId: oid, locationId, category: cat, items, comment: 'Checkbox'+(r.fiscalCode?' · '+r.fiscalCode:'')+(r.isReturn?' · ПОВЕРНЕННЯ':''),
+        total, ts, tsMs: r.ms||Date.now(), dateKey, who:'Checkbox', cashierName: r.cashier||'', isReturn: !!r.isReturn });
+      state.sales.push({ id: uid(), locationId, category: cat, amount: total, ts, tsMs: r.ms||Date.now(), dateKey, who:'Checkbox', checkboxId: oid });
+      const consCart = items.filter(l=>!l.unmapped);
+      if(consCart.length) applySaleConsumption(consCart, warehouseForLocation(locationId));
+    });
+  } finally { historyWhoOverride = null; }
+  cb.stats.applied++;
+  return true;
+}
+async function checkboxTick(){
+  if(cbTickBusy || !authToken || !stateLoaded || saveInFlight || saveDebounceTimer) return;
+  cbTickBusy = true;
+  try{
+    const st = await api('/api/checkbox/status');
+    if(!st.ok || !st.body.enabled){ if(state.checkbox && state.checkbox.enabled){ state.checkbox.enabled = false; } return; }
+    if(state.checkbox && !state.checkbox.enabled){ state.checkbox.enabled = true; }
+    // Підтверджуємо серверу ті чеки, які вже бачимо у збереженому на сервері стані.
+    if(cbAwaiting.size && lastSyncedJSON){
+      const ready = [...cbAwaiting].filter(id=> lastSyncedJSON.includes(id));
+      if(ready.length){ await api('/api/checkbox/confirm', { method:'POST', body: JSON.stringify({ ids: ready }) }); ready.forEach(id=>cbAwaiting.delete(id)); }
+    }
+    if(!st.body.pending) return;
+    const cl = await api('/api/checkbox/claim', { method:'POST', body:'{}' });
+    if(!cl.ok) return;
+    let changed = false;
+    (cl.body.receipts||[]).forEach(r=>{
+      try{ if(applyCheckboxReceipt(r)) changed = true; }catch(e){ console.error('checkbox apply', e); return; }
+      cbAwaiting.add(r.id);
+    });
+    if(changed){
+      saveState();
+      if(['dashboard','stock','myHistory','analytics','checkbox','locationStock','prepDashboard'].includes(view)) render();
+    }
+  } finally { cbTickBusy = false; }
+}
+
+let cbUi = { cfg:null, test:null, goodsMsg:'', filter:'', busy:false };
+async function cbLoadCfg(){
+  const r = await api('/api/checkbox/config');
+  if(r.ok){ cbUi.cfg = r.body; if(state.checkbox) state.checkbox.enabled = !!r.body.enabled; }
+}
+function checkboxView(){
+  const wrap = el(`<div></div>`);
+  const cb = state.checkbox;
+  const topBar = el(`
+    <div class="flex items-center gap-3 mb-4">
+      <button id="cbBack" class="navicon-btn" style="background:var(--card3)">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="font-bold" style="font-size:1.1rem">Checkbox</div>
+    </div>
+  `);
+  topBar.querySelector('#cbBack').onclick = ()=>{ view='settings'; render(); };
+  wrap.appendChild(topBar);
+  if(!isOwner()){ wrap.appendChild(el(`<div class="sub text-sm">Доступно лише власнику.</div>`)); return wrap; }
+  if(!cbUi.cfg){
+    wrap.appendChild(el(`<div class="sub text-sm">Завантаження…</div>`));
+    cbLoadCfg().then(()=>{ if(view==='checkbox') render(); });
+    return wrap;
+  }
+  const cfg = cbUi.cfg;
+  const rerender = ()=>{ if(view==='checkbox') render(); };
+
+  // --- 1. Підключення ---
+  wrap.appendChild(el(`<div class="sec-title mb-2">1. Підключення</div>`));
+  wrap.appendChild(el(`<div class="sub text-xs mb-3">Логін і пароль касира (або керівника) Checkbox. Вони зберігаються лише на сервері й ніколи не передаються в застосунок. Акаунт має бачити чеки потрібних кас.</div>`));
+  const form = el(`<div class="card p-4 mb-3"></div>`);
+  const inLogin = el(`<input type="text" class="w-full mb-2" placeholder="Логін Checkbox" autocomplete="off">`);
+  inLogin.value = cfg.login || '';
+  const inPass = el(`<input type="password" class="w-full mb-2" placeholder="${cfg.hasPassword?'Пароль збережено (введіть, щоб змінити)':'Пароль Checkbox'}" autocomplete="new-password">`);
+  const inKey = el(`<input type="text" class="w-full mb-3" placeholder="Ключ доступу інтеграції (X-Access-Key) — якщо видали" autocomplete="off">`);
+  inKey.value = cfg.accessKey || '';
+  form.appendChild(inLogin); form.appendChild(inPass); form.appendChild(inKey);
+  const row = el(`<div class="flex gap-2"></div>`);
+  const saveBtn = el(`<button class="btn-line flex-1 py-2.5">Зберегти</button>`);
+  const testBtn = el(`<button class="btn-solid flex-1 py-2.5">Перевірити з'єднання</button>`);
+  row.appendChild(saveBtn); row.appendChild(testBtn); form.appendChild(row);
+  const out = el(`<div class="text-xs mt-3" style="white-space:pre-wrap"></div>`);
+  form.appendChild(out);
+  async function saveCfg(){
+    const r = await api('/api/checkbox/config', { method:'PUT', body: JSON.stringify({ login: inLogin.value, password: inPass.value, accessKey: inKey.value }) });
+    if(r.ok){ await cbLoadCfg(); }
+    return r.ok;
+  }
+  saveBtn.onclick = async ()=>{ out.textContent = (await saveCfg()) ? 'Збережено.' : 'Не вдалося зберегти.'; };
+  testBtn.onclick = async ()=>{
+    out.textContent = 'Перевіряємо…';
+    if(!(await saveCfg())){ out.textContent = 'Не вдалося зберегти налаштування.'; return; }
+    const r = await api('/api/checkbox/test', { method:'POST', body:'{}' });
+    if(!r.ok){ out.textContent = 'Помилка запиту до сервера ('+r.status+'). Чи оновлено server.js?'; return; }
+    const b = r.body;
+    if(!b.ok){ out.style.color='var(--danger)'; out.textContent = 'Вхід не вдався: '+b.error; return; }
+    out.style.color='var(--ok)';
+    cb.registers = (b.registers||[]).map(x=>({ id:x.id, title:x.title }));
+    saveState();
+    let t = 'Вхід успішний ✓\n';
+    t += 'Каси: '+((b.registers||[]).length ? b.registers.map(x=>x.title).join(', ') : 'не знайдено'+(b.registersError?' ('+b.registersError+')':''))+'\n';
+    t += b.receiptsError ? ('Чеки за добу: помилка — '+b.receiptsError) : ('Чеків за останню добу: '+b.receiptsLast24h);
+    if(b.sample) t += '\nОстанній чек: '+b.sample.total+' ₴, позицій: '+b.sample.goods.length+(b.sample.cashier?', касир '+b.sample.cashier:'');
+    out.textContent = t;
+    rerender();
+  };
+  wrap.appendChild(form);
+
+  // --- 2. Каси → локації ---
+  wrap.appendChild(el(`<div class="sec-title mb-2 mt-5">2. Каси → локації</div>`));
+  if(!cb.registers.length){
+    wrap.appendChild(el(`<div class="sub text-xs mb-3">Натисніть «Перевірити з'єднання» — після цього тут з'явиться список кас.</div>`));
+  } else {
+    const panel = el(`<div class="card p-4 mb-3"></div>`);
+    cb.registers.forEach(reg=>{
+      const line = el(`<div class="mb-3"><div class="text-sm font-semibold mb-1">${escapeHtml(reg.title)}</div></div>`);
+      const sel = customSelect([{value:'', label:'— не вибрано —'}].concat(state.locations.map(l=>({value:l.id,label:l.name}))), cb.registerMap[reg.id]||'', (v)=>{
+        if(v) cb.registerMap[reg.id] = v; else delete cb.registerMap[reg.id];
+        saveState();
+      });
+      line.appendChild(sel); panel.appendChild(line);
+    });
+    wrap.appendChild(panel);
+  }
+
+  // --- 3. Позиції чека → меню ---
+  wrap.appendChild(el(`<div class="sec-title mb-2 mt-5">3. Позиції Checkbox → товари меню</div>`));
+  wrap.appendChild(el(`<div class="sub text-xs mb-3">Зв'яжіть кожну позицію з Checkbox із товаром меню — від цього залежать собівартість і списання складу. Без зв'язку продаж потрапляє у виторг, але нічого не списується.</div>`));
+  const goodsRow = el(`<div class="flex gap-2 mb-3"></div>`);
+  const loadGoods = el(`<button class="btn-line flex-1 py-2.5">Завантажити товари з Checkbox</button>`);
+  goodsRow.appendChild(loadGoods); wrap.appendChild(goodsRow);
+  const gm = el(`<div class="text-xs mb-3 sub"></div>`); gm.textContent = cbUi.goodsMsg; wrap.appendChild(gm);
+  loadGoods.onclick = async ()=>{
+    gm.textContent = 'Завантажуємо…';
+    const r = await api('/api/checkbox/goods');
+    if(!r.ok || !r.body.ok){ cbUi.goodsMsg = 'Не вдалося: '+((r.body&&r.body.error)||r.status)+'. Позиції також додаються автоматично з чеків, що надходять.'; rerender(); return; }
+    r.body.goods.forEach(g=>{ cb.goodsSeen[g.key] = { name:g.name, code:g.code, price:g.price }; });
+    cbUi.goodsMsg = 'Завантажено позицій: '+r.body.goods.length;
+    saveState(); rerender();
+  };
+  const keys = Object.keys(cb.goodsSeen).sort((a,b)=> cb.goodsSeen[a].name.localeCompare(cb.goodsSeen[b].name,'uk'));
+  const unmapped = keys.filter(k=>!cb.itemMap[k]).length;
+  if(keys.length){
+    wrap.appendChild(el(`<div class="text-xs mb-2"><b>${keys.length}</b> позицій, не зв'язано: <b style="color:${unmapped?'var(--danger)':'var(--ok)'}">${unmapped}</b></div>`));
+    const search = el(`<input type="text" class="w-full mb-3" placeholder="Пошук позиції">`);
+    search.value = cbUi.filter;
+    wrap.appendChild(search);
+    const listHost = el(`<div></div>`);
+    wrap.appendChild(listHost);
+    const products = state.products.slice().sort((a,b)=>a.name.localeCompare(b.name,'uk'));
+    const paint = ()=>{
+      listHost.innerHTML = '';
+      const q = cbUi.filter.trim().toLowerCase();
+      keys.filter(k=>!q || cb.goodsSeen[k].name.toLowerCase().includes(q)).slice(0,80).forEach(k=>{
+        const g = cb.goodsSeen[k];
+        const card = el(`<div class="card p-3 mb-2"><div class="font-semibold text-sm">${escapeHtml(g.name)}</div><div class="sub text-xs mb-2">${g.code?'код '+escapeHtml(g.code)+' · ':''}${g.price?fmtMoney(g.price):''}</div></div>`);
+        card.appendChild(customSelect([{value:'', label:'— не списувати —'}].concat(products.map(p=>({value:p.id,label:p.name}))), cb.itemMap[k]||'', (v)=>{
+          if(v) cb.itemMap[k] = v; else delete cb.itemMap[k];
+          saveState();
+        }));
+        listHost.appendChild(card);
+      });
+    };
+    search.addEventListener('input', e=>{ cbUi.filter = e.target.value; paint(); });
+    paint();
+  } else {
+    wrap.appendChild(el(`<div class="sub text-xs mb-3">Позицій поки немає. Натисніть «Завантажити товари» або дочекайтесь перших чеків.</div>`));
+  }
+
+  // --- 4. Синхронізація ---
+  wrap.appendChild(el(`<div class="sec-title mb-2 mt-5">4. Синхронізація продажів</div>`));
+  const sync = el(`<div class="card p-4 mb-3"></div>`);
+  const enabled = !!cfg.enabled;
+  const swRow = el(`<div class="flex items-center justify-between gap-3 mb-3"><div><div class="font-semibold text-sm">Брати продажі з Checkbox</div><div class="sub text-xs">${enabled?('Увімкнено з '+new Date(cfg.startFrom).toLocaleString('uk-UA')+'. Старіші чеки не враховуються.'):'Увімкніть, коли зіставили каси й товари: застосунок почне враховувати лише НОВІ чеки.'}</div></div></div>`);
+  const sw = el(`<button type="button" style="width:46px;height:26px;border-radius:999px;border:none;position:relative;flex-shrink:0;background:${enabled?'var(--accent)':'#c3cbdd'}"><span style="position:absolute;top:3px;left:${enabled?'23px':'3px'};width:20px;height:20px;border-radius:50%;background:#fff;transition:left .15s"></span></button>`);
+  sw.onclick = async ()=>{
+    const r = await api('/api/checkbox/enable', { method:'POST', body: JSON.stringify({ enabled: !enabled }) });
+    if(!r.ok){ appAlert(r.status===400 ? 'Спершу збережіть логін і пароль Checkbox.' : 'Не вдалося змінити стан.'); return; }
+    cb.enabled = !enabled;
+    logEvent('settings', 'Синхронізація продажів з Checkbox: '+(!enabled?'увімкнено':'вимкнено'));
+    saveState(); await cbLoadCfg(); rerender();
+  };
+  swRow.appendChild(sw); sync.appendChild(swRow);
+  const mRow = el(`<div class="flex items-center justify-between gap-3 mb-3"><div><div class="font-semibold text-sm">Забороняти ручне оформлення замовлень</div><div class="sub text-xs">Щоб продаж не рахувався двічі (на касі й у застосунку).</div></div></div>`);
+  const sw2 = el(`<button type="button" style="width:46px;height:26px;border-radius:999px;border:none;position:relative;flex-shrink:0;background:${cb.blockManual?'var(--accent)':'#c3cbdd'}"><span style="position:absolute;top:3px;left:${cb.blockManual?'23px':'3px'};width:20px;height:20px;border-radius:50%;background:#fff;transition:left .15s"></span></button>`);
+  sw2.onclick = ()=>{ cb.blockManual = !cb.blockManual; saveState(); rerender(); };
+  mRow.appendChild(sw2); sync.appendChild(mRow);
+  let info = '';
+  try{ const li = cfg.lastSync ? JSON.parse(cfg.lastSync) : null; if(li) info += 'Остання синхронізація: '+new Date(li.at).toLocaleTimeString('uk-UA')+' · отримано '+li.fetched+', нових '+li.added+'\n'; }catch(e){}
+  info += 'Чеків у черзі на застосування: '+cfg.pending+' · застосовано: '+(cb.stats.applied||0);
+  if(cb.stats.unmappedLines) info += '\nПозицій без зв\'язку: '+cb.stats.unmappedLines+' (без списання)';
+  if(cb.stats.unmappedRegisters) info += '\nЧеків із каси без локації: '+cb.stats.unmappedRegisters+' (віднесено до першої локації)';
+  const infoEl = el(`<div class="sub text-xs" style="white-space:pre-wrap"></div>`); infoEl.textContent = info; sync.appendChild(infoEl);
+  if(cfg.lastError){ const er = el(`<div class="text-xs mt-2" style="color:var(--danger);white-space:pre-wrap"></div>`); er.textContent = 'Помилка синхронізації: '+cfg.lastError; sync.appendChild(er); }
+  const nowBtn = el(`<button class="btn-line w-full py-2.5 mt-3">Синхронізувати зараз</button>`);
+  nowBtn.onclick = async ()=>{ nowBtn.textContent='…'; await api('/api/checkbox/sync-now',{method:'POST',body:'{}'}); await cbLoadCfg(); await checkboxTick(); rerender(); };
+  sync.appendChild(nowBtn);
+  wrap.appendChild(sync);
+  return wrap;
+}
+
 function settingsView(){
   const wrap = el(`<div></div>`);
 
@@ -6326,6 +6601,7 @@ function settingsView(){
     { label: 'Нова готовка', icon: 'flame', action: ()=>{ view='productionStart'; render(); } },
     { label: 'Зв\'язки готовки', icon: 'link', action: ()=>{ view='productionLinks'; render(); } },
     { label: 'Аналітика', icon: 'dashboard', action: ()=>{ view='analytics'; render(); } },
+    { label: 'Checkbox', icon: 'receipt', action: ()=>{ cbUi.cfg=null; view='checkbox'; render(); } },
     { label: 'Графік змін', icon: 'calendar', action: ()=>{ view='scheduleCalendar'; render(); } },
     { label: 'Історія оцінок', icon: 'checklist', action: ()=>{ view='shiftRatings'; render(); } },
     { label: 'Журнал подій', icon: 'list', action: ()=>{ view='auditLog'; render(); } },
