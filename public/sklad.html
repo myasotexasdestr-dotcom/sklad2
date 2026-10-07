@@ -78,6 +78,7 @@
   .hero-loc span:first-child{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .hero-loc span:nth-child(2){color:var(--text); font-weight:600; min-width:70px; text-align:right;}
   .hero-loc span:nth-child(3){font-weight:700; min-width:70px; text-align:right;}
+  .hero-chk{background:var(--accent); color:#fff; border:none; border-radius:999px; padding:2px 10px; font-size:.68rem; font-weight:600; margin-left:4px; flex-shrink:0; line-height:1.5;}
   .pill-chip{display:inline-flex; align-items:center; gap:6px; background:rgba(255,255,255,.85); border:1px solid var(--line); border-radius:999px; padding:6px 12px; font-size:.72rem; font-weight:500; color:var(--sub);}
   .pill-chip b{color:var(--text); font-weight:700;}
   .sec-head{display:flex; align-items:center; justify-content:space-between; margin:4px 2px 12px;}
@@ -412,7 +413,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.15';
+const APP_VERSION='2026-10-07.16';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -431,6 +432,8 @@ let editingInventoryId = null;
 const WRITEOFF_REASONS = ['Зіпсовано', 'Прострочено', 'Бій / пошкодження', 'Інше'];
 let editingProductionId = null;
 let editingTransferId = null;
+let receiptsLocationId = null; // локація, чию історію чеків відкрито
+let receiptsPeriod = 1; // 1 / 7 / 30 днів
 let viewingLocationId = null; // локація, чий склад показуємо на екрані "Склад точки" (з картки в Аналітиці)
 // Коли поставку відкрили з "потрібно/є" (заготівельник) або зі "Складу точки" (власник, з картки в
 // Аналітиці) — тут лежить назва екрана, куди веде кнопка "Назад", і "Куди" на формі поставки
@@ -2295,6 +2298,11 @@ function render(){
     navHost.appendChild(tabbar());
     return;
   }
+  if(view==='receipts'){
+    app.appendChild(receiptsView());
+    navHost.appendChild(tabbar());
+    return;
+  }
   if(view==='locationStock'){
     app.appendChild(locationStockView());
     navHost.appendChild(tabbar());
@@ -2562,7 +2570,7 @@ function tabbar(){
   // У власника «Поставки» тепер живуть у Налаштуваннях, а «Нова готовка» — теж там.
   if(isOwner() && (view==='transferList' || view==='transferReceive')) activeKey = 'settings';
   if(isOwner() && (view==='productionStart' || view==='productionDetail')) activeKey = 'settings';
-  if(view==='locationStock') activeKey = 'dashboard';
+  if(view==='locationStock' || view==='receipts') activeKey = 'dashboard';
   // Власник відкрив поставку прямо зі "Складу точки" (картка в Аналітиці) — підсвічуємо той самий таб.
   if(view==='transferStart' && transferReturnTo==='locationStock') activeKey = 'dashboard';
   // "Закупівля" (нове поповнення складу закупівлею) відкрита з Закупівель, або, у касира, з власної вкладки «Закупка».
@@ -2791,9 +2799,10 @@ function dashboardView(){
           <div style="font-weight:700;font-size:1.05rem;color:${totalProfit<0?'var(--danger)':'var(--accent2)'}">${totalProfit<0?'-':''}${fmt(Math.abs(totalProfit))} ₴</div>
         </div>
       </div>
-      <div class="hero-locs">${perLoc.map(r=>`<div class="hero-loc"><span>${escapeHtml(r.loc.name)}</span><span>${fmt(r.turnover)}</span><span style="color:${r.lp.profit<0?'var(--danger)':'var(--accent2)'}">${fmt(r.lp.profit)}</span></div>`).join('')}</div>
+      <div class="hero-locs">${perLoc.map(r=>`<div class="hero-loc"><span>${escapeHtml(r.loc.name)}</span><span>${fmt(r.turnover)}</span><span style="color:${r.lp.profit<0?'var(--danger)':'var(--accent2)'}">${fmt(r.lp.profit)}</span><button type="button" class="hero-chk" data-loc="${escapeHtml(r.loc.id)}">Чеки ›</button></div>`).join('')}</div>
     </div>
   `);
+  hero.querySelectorAll('.hero-chk').forEach(b=>{ b.onclick = (e)=>{ e.stopPropagation(); receiptsLocationId = b.getAttribute('data-loc'); view='receipts'; render(); }; });
   hero.querySelector('#heroGo').onclick = ()=>{ view='analytics'; render(); };
   wrap.appendChild(hero);
 
@@ -6588,6 +6597,84 @@ function checkboxView(){
   nowBtn.onclick = async ()=>{ nowBtn.textContent='…'; await api('/api/checkbox/sync-now',{method:'POST',body:'{}'}); await cbLoadCfg(); await checkboxTick(); rerender(); };
   sync.appendChild(nowBtn);
   wrap.appendChild(sync);
+  return wrap;
+}
+
+// Історія чеків конкретної локації (з картки «Виторг» на головній): чеки Checkbox за період,
+// кожен розгортається в перелік позицій із собівартістю й профітом.
+function receiptsView(){
+  const wrap = el(`<div></div>`);
+  const loc = state.locations.find(l=>l.id===receiptsLocationId) || state.locations[0];
+  const topBar = el(`
+    <div class="flex items-center gap-3 mb-4">
+      <button id="rcBack" class="navicon-btn" style="background:var(--card3)">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div><div class="font-bold" style="font-size:1.1rem">Історія чеків</div><div class="sub text-xs">${escapeHtml(loc?loc.name:'')}</div></div>
+    </div>
+  `);
+  topBar.querySelector('#rcBack').onclick = ()=>{ view='dashboard'; render(); };
+  wrap.appendChild(topBar);
+  if(!loc){ wrap.appendChild(el(`<div class="sub text-center py-10">Локацію не знайдено</div>`)); return wrap; }
+
+  const periodRow = el(`<div class="flex mb-4 p-1" style="background:var(--card2);border-radius:18px"></div>`);
+  [[1,'Сьогодні'],[7,'7 днів'],[30,'30 днів']].forEach(([d,label])=>{
+    periodRow.appendChild(tabBarItem('history', label, receiptsPeriod===d, ()=>{ receiptsPeriod=d; render(); }));
+  });
+  wrap.appendChild(periodRow);
+
+  const orders = (state.orders||[]).filter(o=> o.locationId===loc.id && dateKeyInRange(o.dateKey, receiptsPeriod))
+    .sort((a,b)=> (b.tsMs||0)-(a.tsMs||0));
+  const sum = orders.reduce((s,o)=>s+(o.total||0),0);
+  const cost = orders.reduce((s,o)=> s + (o.items||[]).filter(l=>!l.unmapped).reduce((c,l)=> c + lineUnitCost(l)*l.qty, 0), 0);
+  wrap.appendChild(el(`
+    <div class="card p-4 mb-4">
+      <div class="flex items-center justify-between">
+        <div><div class="sub text-xs">Чеків: ${orders.length}</div><div class="font-bold" style="font-size:1.3rem">${fmtMoney(sum)}</div></div>
+        <div style="text-align:right"><div class="sub text-xs">Профіт</div><div class="font-bold" style="color:${sum-cost<0?'var(--danger)':'var(--accent2)'}">${fmtMoney(sum-cost)}</div></div>
+      </div>
+    </div>
+  `));
+  if(orders.length===0){
+    wrap.appendChild(el(`<div class="sub text-center py-10">За цей період чеків немає</div>`));
+    return wrap;
+  }
+  orders.forEach(o=>{
+    const cnt = (o.items||[]).reduce((s,l)=>s+Math.abs(l.qty||0),0);
+    const oCost = (o.items||[]).filter(l=>!l.unmapped).reduce((c,l)=> c + lineUnitCost(l)*l.qty, 0);
+    const card = el(`
+      <div class="card p-3 mb-2" style="cursor:pointer">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="font-medium">${o.isReturn?'↩ Повернення':'🧾 Чек'}${o.cashierName?' · '+escapeHtml(o.cashierName):''}</div>
+            <div class="sub text-xs">${escapeHtml(o.ts)} · ${fmt(cnt)} поз.${o.who&&o.who!=='Checkbox'?' · '+escapeHtml(o.who):''}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="font-bold" style="color:${o.total<0?'var(--danger)':'var(--text)'}">${fmtMoney(o.total)}</div>
+            <div class="sub text-xs">профіт ${fmtMoney(o.total-oCost)}</div>
+          </div>
+        </div>
+        <div class="rc-lines" style="display:none;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)"></div>
+      </div>
+    `);
+    const box = card.querySelector('.rc-lines');
+    (o.items||[]).forEach(l=>{
+      const det = orderLineDetails(l);
+      box.appendChild(el(`
+        <div class="flex items-start justify-between" style="padding:4px 0">
+          <div style="min-width:0">
+            <div class="text-sm">${escapeHtml(l.name)} × ${fmt(Math.abs(l.qty))}${l.unmapped?' <span class="low text-xs">(без зв\'язку)</span>':''}</div>
+            ${l.checkboxName && l.checkboxName!==l.name ? `<div class="sub text-xs">у чеку: ${escapeHtml(l.checkboxName)}</div>` : ''}
+            ${det?`<div class="sub text-xs">${escapeHtml(det)}</div>`:''}
+          </div>
+          <div class="text-sm font-medium" style="white-space:nowrap;margin-left:8px">${fmtMoney(l.price*l.qty)}</div>
+        </div>
+      `));
+    });
+    if(o.comment) box.appendChild(el(`<div class="sub text-xs" style="margin-top:6px">${escapeHtml(o.comment)}</div>`));
+    card.addEventListener('click', ()=>{ box.style.display = box.style.display==='none' ? 'block' : 'none'; });
+    wrap.appendChild(card);
+  });
   return wrap;
 }
 
