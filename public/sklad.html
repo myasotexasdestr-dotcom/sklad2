@@ -14,52 +14,58 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#17181c; --text:#f5f5f7; --sub:#8f9099;
-    --accent:#ff6a4d; --accent2:#34d399; --danger:#ff5c6c; --ok:#34d399; --warn:#ffb020;
-    --card2:#212227; --card3:#26272d;
+    /* Світла «скляна» тема: прохолодний блакитно-сірий фон, білі напівпрозорі картки, темно-синій акцент */
+    --bg:#e9eef7; --text:#16213b; --sub:#7a8499;
+    --accent:#2f4172; --accent2:#12a574; --danger:#e5484d; --ok:#12a574; --warn:#e8a317;
+    --card2:rgba(255,255,255,.78); --card3:rgba(226,233,246,.85);
+    --line:rgba(47,65,114,.12); --shadow:0 10px 30px rgba(40,60,110,.10);
     box-sizing:border-box;
     padding-top:env(safe-area-inset-top,0px);
     padding-bottom:env(safe-area-inset-bottom,0px);
   }
-  html{scroll-padding-top:env(safe-area-inset-top,0px);}
-  body{background:var(--bg); color:var(--text); font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif; margin:0; min-height:100vh;}
-  .card{background:var(--card2); border-radius:20px;}
+  html{scroll-padding-top:env(safe-area-inset-top,0px); background:#e9eef7;}
+  body{background:linear-gradient(180deg,#f4f7fc 0%,#e6ecf6 50%,#d2dbee 100%) fixed; color:var(--text); font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif; margin:0; min-height:100vh;}
+  .card{background:var(--card2); border-radius:24px; border:1px solid rgba(255,255,255,.85); box-shadow:var(--shadow); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);}
+  .card .card{box-shadow:none; background:var(--card3);}
   .sub{color:var(--sub);}
   .low{color:var(--danger);}
   ::-webkit-scrollbar{display:none;}
   /* iOS Safari auto-zooms the whole page when a focused input's font-size is under 16px.
      Force every field to at least 16px so tapping in never triggers that zoom. */
   input, select, textarea{ font-size:16px; }
+  input::placeholder, textarea::placeholder{ color:#9aa4ba; }
   .eyebrow{color:var(--sub); font-size:.72rem; font-weight:600;}
 
   /* solid pill — primary action per screen */
   .btn-solid{background:var(--accent); color:#fff; border-radius:999px; font-weight:700; font-size:.95rem;
-    box-shadow:0 8px 20px rgba(255,106,77,.35);}
+    box-shadow:0 10px 22px rgba(47,65,114,.30); border:none;}
+  .btn-solid:disabled{box-shadow:none;}
   /* outline pill — secondary actions */
-  .btn-line{background:var(--card3); border:none; color:var(--text); border-radius:999px; font-weight:600; font-size:.85rem;}
+  .btn-line{background:rgba(255,255,255,.75); border:1px solid var(--line); color:var(--text); border-radius:999px; font-weight:600; font-size:.85rem;}
 
-  .pin-input{letter-spacing:0.6em; font-size:1.5rem; text-align:center; background:var(--card3); color:var(--text); border:none; border-radius:16px;}
+  .pin-input{letter-spacing:0.6em; font-size:1.5rem; text-align:center; background:var(--card3); color:var(--text); border:none; border-radius:18px;}
 
   /* segmented tab switcher */
   .navtab{color:var(--sub); font-size:.85rem; font-weight:600; background:none; border:none; border-radius:999px; padding:8px 0;}
-  .navtab.active{color:var(--bg); background:var(--text);}
+  .navtab.active{color:#fff; background:var(--accent);}
 
   /* icon badge — colored circle behind an icon */
-  .icon-badge{width:38px; height:38px; border-radius:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+  .icon-badge{width:38px; height:38px; border-radius:14px; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
   .icon-badge svg{width:18px; height:18px;}
 
-  /* full-width icon bottom nav — pinned to the visible screen bottom */
-  .navbar-pill{position:fixed; left:0; right:0; bottom:0; z-index:50;
-    background:#1c1d22; border-top:1px solid #2a2b31; display:flex; align-items:center; justify-content:space-around;
-    padding:10px 8px calc(10px + env(safe-area-inset-bottom,0px));}
-  .navicon-btn{width:46px; height:40px; border-radius:14px; display:flex; align-items:center; justify-content:center; background:none; border:none;}
-  .navicon-btn svg{width:22px; height:22px; stroke:#6f7078;}
-  .navicon-btn.active{background:var(--card3);}
-  .navicon-btn.active svg{stroke:var(--accent);}
+  /* плаваюча «пігулка» навігації знизу — активна вкладка = темно-синє коло з білою іконкою */
+  .navbar-pill{position:fixed; left:14px; right:14px; bottom:calc(12px + env(safe-area-inset-bottom,0px)); z-index:50; max-width:420px; margin:0 auto;
+    background:rgba(255,255,255,.88); -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px);
+    border:1px solid rgba(255,255,255,.9); border-radius:34px; box-shadow:0 14px 36px rgba(40,60,110,.18);
+    display:flex; align-items:center; justify-content:space-around; padding:8px 10px;}
+  .navicon-btn{width:48px; height:48px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:none; border:none;}
+  .navicon-btn svg{width:22px; height:22px; stroke:#8b96ad;}
+  .navicon-btn.active{background:var(--accent); box-shadow:0 8px 18px rgba(47,65,114,.35);}
+  .navicon-btn.active svg{stroke:#fff;}
 </style>
 </head>
 <body>
-<div id="app" class="max-w-md mx-auto px-4 pt-4" style="padding-bottom:96px"></div>
+<div id="app" class="max-w-md mx-auto px-4 pt-4" style="padding-bottom:120px"></div>
 <div id="navHost"></div>
 <div id="syncBanner" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:999;background:#ffb020;color:#1a1a1a;font-size:.78rem;font-weight:600;text-align:center;padding:6px 10px;"></div>
 
@@ -71,8 +77,8 @@ try{
     // Узгоджуємо системний хедер/фон Telegram із темною темою застосунку, щоб не було білого
     // спалаху під час відкриття, і вимикаємо смахування вниз, яке інакше може випадково закрити
     // застосунок посеред заповнення форми.
-    if(typeof Telegram.WebApp.setHeaderColor==='function') Telegram.WebApp.setHeaderColor('#17181c');
-    if(typeof Telegram.WebApp.setBackgroundColor==='function') Telegram.WebApp.setBackgroundColor('#17181c');
+    if(typeof Telegram.WebApp.setHeaderColor==='function') Telegram.WebApp.setHeaderColor('#e9eef7');
+    if(typeof Telegram.WebApp.setBackgroundColor==='function') Telegram.WebApp.setBackgroundColor('#e9eef7');
     if(typeof Telegram.WebApp.disableVerticalSwipes==='function') Telegram.WebApp.disableVerticalSwipes();
   }
 }catch(e){}
@@ -338,7 +344,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION = '2026-10-07.5';
+const APP_VERSION = '2026-10-07.6';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -1196,7 +1202,7 @@ function cashierRequestView(){
   formCard.appendChild(selHost);
 
   formCard.appendChild(el(`<div class="sub text-xs mb-1">Скільки потрібно</div>`));
-  const qtyInput = el(`<input type="text" inputmode="decimal" class="w-full py-2.5 px-3 mb-2" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid #3a3b42" placeholder="0">`);
+  const qtyInput = el(`<input type="text" inputmode="decimal" class="w-full py-2.5 px-3 mb-2" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid rgba(47,65,114,.25)" placeholder="0">`);
   formCard.appendChild(qtyInput);
 
   const formErr = el(`<div class="text-sm mb-2" style="color:var(--danger);min-height:1.2em"></div>`);
@@ -1218,7 +1224,7 @@ function cashierRequestView(){
   wrap.appendChild(formCard);
 
   wrap.appendChild(el(`<div class="sub text-xs mb-1">Коментар (необов'язково)</div>`));
-  const noteInput = el(`<input type="text" class="w-full py-2.5 px-3 mb-3" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid #3a3b42" placeholder="Наприклад, терміново">`);
+  const noteInput = el(`<input type="text" class="w-full py-2.5 px-3 mb-3" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid rgba(47,65,114,.25)" placeholder="Наприклад, терміново">`);
   wrap.appendChild(noteInput);
 
   const err = el(`<div class="text-sm mb-2" style="color:var(--danger);min-height:1.2em"></div>`);
@@ -1729,7 +1735,7 @@ function escapeHtml(s){
 // confirm() (delete, etc.) looked like they did nothing. These helpers use Telegram's own popup API
 // when available and otherwise fall back to a themed in-page modal, so they work the same everywhere.
 function showModal(contentBuilder){
-  const overlay = el(`<div style="position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center;padding:16px"></div>`);
+  const overlay = el(`<div style="position:fixed;inset:0;z-index:200;background:rgba(22,33,59,.45);display:flex;align-items:flex-end;justify-content:center;padding:16px"></div>`);
   const card = el(`<div class="card" style="width:100%;max-width:420px;padding:20px;padding-bottom:calc(20px + env(safe-area-inset-bottom,0px));max-height:85vh;overflow-y:auto"></div>`);
   overlay.appendChild(card);
   document.body.appendChild(overlay);
@@ -1852,7 +1858,7 @@ function customSelect(options, initialValue, onChange){
   const labelSpan = btn.querySelector('[data-label]');
   const chev = btn.querySelector('[data-chev]');
   const panel = el(`
-    <div style="position:absolute; left:0; right:0; top:calc(100% + 8px); z-index:60; background:var(--card2); border:1px solid #33343b; border-radius:16px; box-shadow:0 16px 40px rgba(0,0,0,.5); max-height:240px; overflow-y:auto; padding:6px; display:none;"></div>
+    <div style="position:absolute; left:0; right:0; top:calc(100% + 8px); z-index:60; background:var(--card2); border:1px solid rgba(47,65,114,.14); border-radius:16px; box-shadow:0 16px 40px rgba(40,60,110,.20); max-height:240px; overflow-y:auto; padding:6px; display:none;"></div>
   `);
 
   function renderOptions(){
@@ -1933,14 +1939,14 @@ function datePickerField(initialValue, onChange){
     : (()=>{ const t = new Date(); return { year: t.getFullYear(), month: t.getMonth() }; })();
 
   const btn = el(`
-    <button type="button" class="w-full flex items-center justify-between" style="border-radius:10px;background:var(--card2);color:${selectedDate?'var(--text)':'var(--sub)'};border:1px solid #3a3b42;padding:12px 14px;text-align:left;font-size:.9rem;font-weight:600">
+    <button type="button" class="w-full flex items-center justify-between" style="border-radius:10px;background:var(--card2);color:${selectedDate?'var(--text)':'var(--sub)'};border:1px solid rgba(47,65,114,.25);padding:12px 14px;text-align:left;font-size:.9rem;font-weight:600">
       <span data-label>${selectedDate ? formatDMY(selectedDate) : 'Оберіть дату'}</span>
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--sub)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-left:8px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
     </button>
   `);
   const labelSpan = btn.querySelector('[data-label]');
   const panel = el(`
-    <div style="position:absolute; left:0; right:0; top:calc(100% + 8px); z-index:60; background:var(--card2); border:1px solid #33343b; border-radius:16px; box-shadow:0 16px 40px rgba(0,0,0,.5); padding:10px; display:none;"></div>
+    <div style="position:absolute; left:0; right:0; top:calc(100% + 8px); z-index:60; background:var(--card2); border:1px solid rgba(47,65,114,.14); border-radius:16px; box-shadow:0 16px 40px rgba(40,60,110,.20); padding:10px; display:none;"></div>
   `);
 
   function renderCalendar(){
@@ -1948,11 +1954,11 @@ function datePickerField(initialValue, onChange){
     const nav = el(`
       <div class="flex items-center justify-between mb-2">
         <button type="button" data-prev class="navicon-btn" style="width:28px;height:28px;background:var(--card3)">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
         <div class="font-semibold text-sm">${SCHEDULE_MONTH_NAMES[cursor.month]} ${cursor.year}</div>
         <button type="button" data-next class="navicon-btn" style="width:28px;height:28px;background:var(--card3)">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
         </button>
       </div>
     `);
@@ -2068,7 +2074,7 @@ function segmentedPicker(options, activeKey, onChange){
       const on = k===activeKey;
       btn.style.background = on ? 'var(--accent)' : 'transparent';
       btn.style.color = on ? '#fff' : 'var(--sub)';
-      btn.style.boxShadow = on ? '0 4px 12px rgba(255,106,77,.35)' : 'none';
+      btn.style.boxShadow = on ? '0 4px 12px rgba(47,65,114,.30)' : 'none';
     });
   }
   options.forEach(opt=>{
@@ -2096,7 +2102,7 @@ function categoryTabsAndSearch(activeKey, onFilterChange, searchValue, onSearchI
       const on = k===activeKey;
       btn.style.background = on ? 'var(--accent)' : 'transparent';
       btn.style.color = on ? '#fff' : 'var(--sub)';
-      btn.style.boxShadow = on ? '0 4px 12px rgba(255,106,77,.35)' : 'none';
+      btn.style.boxShadow = on ? '0 4px 12px rgba(47,65,114,.30)' : 'none';
     });
   }
   [['meat',"М'ясо з Техасу"],['fastfood','Фастфуд']].forEach(([key,label])=>{
@@ -2495,7 +2501,7 @@ function analyticsView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="anBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Аналітика</div>
     </div>
@@ -2605,7 +2611,7 @@ function analyticsView(){
       <div class="flex items-center justify-between text-sm mt-1">
         <span class="sub">Недостача при інвентаризації</span><span class="font-bold" style="color:var(--danger)">-${fmt(sh.inventoryShortfallTotal)} ₴</span>
       </div>
-      <div class="flex items-center justify-between text-sm mt-2" style="border-top:1px solid #33343b;padding-top:8px">
+      <div class="flex items-center justify-between text-sm mt-2" style="border-top:1px solid rgba(47,65,114,.14);padding-top:8px">
         <span class="font-semibold">Разом</span><span class="font-bold" style="color:var(--danger)">-${fmt(sh.total)} ₴</span>
       </div>
     </div>
@@ -2648,11 +2654,11 @@ function dashboardView(){
       <div class="sub text-sm">Аналітика вашого бізнесу:</div>
       <div class="flex items-center gap-1">
         <button id="dPrev" class="navicon-btn" style="width:26px;height:26px" ${dashboardOffset>=6?'disabled':''}>
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="${dashboardOffset>=6?'#4a4a4a':'#f2efe9'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="${dashboardOffset>=6?'#b7c0d3':'var(--text)'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
         <div class="eyebrow" style="font-size:.68rem">${dateLabelFromOffset(dashboardOffset)}</div>
         <button id="dNext" class="navicon-btn" style="width:26px;height:26px" ${dashboardOffset<=0?'disabled':''}>
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="${dashboardOffset<=0?'#4a4a4a':'#f2efe9'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="${dashboardOffset<=0?'#b7c0d3':'var(--text)'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
         </button>
       </div>
     </div>
@@ -2669,7 +2675,7 @@ function dashboardView(){
     const lp = locationProfit(loc.id, o=>o.dateKey===dateKey);
     const card = el(`
       <div class="card p-4" style="min-width:180px;flex-shrink:0; scroll-snap-align:start; cursor:pointer">
-        <div class="icon-badge mb-3" style="background:rgba(255,106,77,.15)">
+        <div class="icon-badge mb-3" style="background:rgba(47,65,114,.10)">
           <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l9-4 9 4-9 4-9-4z"/><path d="M3 8v9l9 4 9-4V8"/></svg>
         </div>
         <div class="font-bold mb-3" style="font-size:.85rem">${escapeHtml(loc.name)}</div>
@@ -2681,7 +2687,7 @@ function dashboardView(){
           <span class="sub">Фастфуд</span>
           <span class="font-bold">${fmtMoney(ff)}</span>
         </div>
-        <div class="flex items-center justify-between text-sm mt-2 pt-2" style="border-top:1px solid #2a2b31">
+        <div class="flex items-center justify-between text-sm mt-2 pt-2" style="border-top:1px solid rgba(47,65,114,.12)">
           <span class="sub">Профіт</span>
           <span class="font-bold" style="color:${lp.profit<0?'var(--danger)':'var(--accent2)'}">${fmtMoney(lp.profit)}</span>
         </div>
@@ -2735,7 +2741,7 @@ function locationStockView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="lsBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">${escapeHtml(loc ? loc.name : '')}</div>
     </div>
@@ -2796,7 +2802,7 @@ function prepTransferLocationsView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="ptlBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Поставка</div>
     </div>
@@ -2831,7 +2837,7 @@ function locationTransferNeedsView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="ltnBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">${escapeHtml(loc ? loc.name : '')}</div>
     </div>
@@ -3151,7 +3157,7 @@ function orderView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="obBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Нове замовлення</div>
     </div>
@@ -3225,7 +3231,7 @@ function orderProductsStep(){
     if(sections.length){
       head.onclick = ()=>{ expandedProductId = isExpanded ? null : p.id; optionPicks = {}; render(); };
       if(isExpanded){
-        const panel = el(`<div class="mt-3 pt-3" style="border-top:1px solid #2a2b31"></div>`);
+        const panel = el(`<div class="mt-3 pt-3" style="border-top:1px solid rgba(47,65,114,.12)"></div>`);
         sections.forEach(sec=>{
           panel.appendChild(el(`<div class="sub text-xs mb-2">${escapeHtml(sec.label)}</div>`));
           const rowOpts = el(`<div class="flex flex-wrap gap-2 mb-3"></div>`);
@@ -3253,7 +3259,7 @@ function orderProductsStep(){
     } else if(p.modifier && p.modifier.options && p.modifier.options.length){
       head.onclick = ()=>{ expandedProductId = isExpanded ? null : p.id; render(); };
       if(isExpanded){
-        const opts = el(`<div class="mt-3 pt-3" style="border-top:1px solid #2a2b31"></div>`);
+        const opts = el(`<div class="mt-3 pt-3" style="border-top:1px solid rgba(47,65,114,.12)"></div>`);
         opts.appendChild(el(`<div class="sub text-xs mb-2">${escapeHtml(p.modifier.label)}</div>`));
         p.modifier.options.forEach(opt=>{
           const optBtn = el(`<button class="btn-line w-full mb-2" style="text-align:left;padding:10px 14px">${escapeHtml(opt.name)}</button>`);
@@ -3359,7 +3365,7 @@ function purchaseView(){
 
   wrap.appendChild(el(`
     <div class="py-10 text-center">
-      <div class="icon-badge mx-auto mb-4" style="width:56px;height:56px;border-radius:18px;background:rgba(255,106,77,.15)">
+      <div class="icon-badge mx-auto mb-4" style="width:56px;height:56px;border-radius:18px;background:rgba(47,65,114,.10)">
         <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.4a2 2 0 0 0 2-1.6L21 8H6"/></svg>
       </div>
       <div class="sub text-sm px-6">Замовлення постачальникам додамо на наступному кроці</div>
@@ -3378,7 +3384,7 @@ function purchaseCreateView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="pcBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Закупівля</div>
     </div>
@@ -3492,7 +3498,7 @@ function ingredientsView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="igBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Рецепти</div>
     </div>
@@ -3565,7 +3571,7 @@ function ingredientPrepareView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="ppBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">${ing?'Заготовка: '+escapeHtml(ing.name):'Нова заготовка'}</div>
     </div>
@@ -3784,7 +3790,7 @@ function stockView(){
       if(pendingHandover){
         const priorStaff = state.staff.find(s=>s.id===pendingHandover.staffId);
         const handoverBanner = el(`
-          <div class="card p-3 mb-3" style="cursor:pointer;background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.3)">
+          <div class="card p-3 mb-3" style="cursor:pointer;background:rgba(232,163,23,.14);border:1px solid rgba(232,163,23,.35)">
             <div class="font-semibold text-sm">🟡 Прийняти зміну</div>
             <div class="sub text-xs mt-0.5">Оцініть, як точку залишив(ла) ${escapeHtml(priorStaff?priorStaff.name:'-')}</div>
           </div>
@@ -3826,7 +3832,7 @@ function stockView(){
       const pending = pendingTransfersFor(state.currentWarehouse);
       if(pending.length>0){
         const banner = el(`
-          <div class="card p-3 mb-3" style="background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.3);cursor:pointer">
+          <div class="card p-3 mb-3" style="background:rgba(232,163,23,.14);border:1px solid rgba(232,163,23,.35);cursor:pointer">
             <div class="font-semibold text-sm">⚠ Нова поставка: ${pending.length} шт. очікує прийому</div>
             <div class="sub text-xs mt-0.5">Перевірте фактичну кількість і підтвердіть прийом</div>
           </div>
@@ -3915,7 +3921,7 @@ function stockItemAddView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-5">
       <button id="siBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">${editing?'Редагування продукту':'Новий продукт'}</div>
     </div>
@@ -4152,7 +4158,7 @@ function writeOffStartView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="woBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Списання товару</div>
     </div>
@@ -4222,7 +4228,7 @@ function shiftAcceptView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="shBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Прийняти зміну</div>
     </div>
@@ -4254,8 +4260,8 @@ function shiftAcceptView(){
       <div class="card p-3 mb-2.5">
         <div class="font-semibold text-sm mb-2">${escapeHtml(q.label)}</div>
         <div class="flex gap-2">
-          <button type="button" data-v="good" class="flex-1 py-2.5" style="border-radius:10px;border:1.5px solid #3a3b42;background:var(--card3);color:var(--text);font-weight:600;font-size:.85rem">Добре</button>
-          <button type="button" data-v="bad" class="flex-1 py-2.5" style="border-radius:10px;border:1.5px solid #3a3b42;background:var(--card3);color:var(--text);font-weight:600;font-size:.85rem">Погано</button>
+          <button type="button" data-v="good" class="flex-1 py-2.5" style="border-radius:10px;border:1.5px solid rgba(47,65,114,.25);background:var(--card3);color:var(--text);font-weight:600;font-size:.85rem">Добре</button>
+          <button type="button" data-v="bad" class="flex-1 py-2.5" style="border-radius:10px;border:1.5px solid rgba(47,65,114,.25);background:var(--card3);color:var(--text);font-weight:600;font-size:.85rem">Погано</button>
         </div>
       </div>
     `);
@@ -4264,10 +4270,10 @@ function shiftAcceptView(){
     const paint = ()=>{
       const v = answers[q.key];
       goodBtn.style.background = v==='good' ? 'var(--accent2)' : 'var(--card3)';
-      goodBtn.style.borderColor = v==='good' ? 'var(--accent2)' : '#3a3b42';
-      goodBtn.style.color = v==='good' ? '#0c0c0f' : 'var(--text)';
+      goodBtn.style.borderColor = v==='good' ? 'var(--accent2)' : 'rgba(47,65,114,.25)';
+      goodBtn.style.color = v==='good' ? '#fff' : 'var(--text)';
       badBtn.style.background = v==='bad' ? 'var(--danger)' : 'var(--card3)';
-      badBtn.style.borderColor = v==='bad' ? 'var(--danger)' : '#3a3b42';
+      badBtn.style.borderColor = v==='bad' ? 'var(--danger)' : 'rgba(47,65,114,.25)';
       badBtn.style.color = v==='bad' ? '#fff' : 'var(--text)';
     };
     goodBtn.onclick = ()=>{ answers[q.key]='good'; paint(); };
@@ -4302,7 +4308,7 @@ function shiftRatingsView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="srBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Історія оцінок змін</div>
     </div>
@@ -4351,7 +4357,7 @@ function myRatingView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="mrBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Мій рейтинг</div>
     </div>
@@ -4410,7 +4416,7 @@ function auditLogView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="alBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Журнал подій</div>
     </div>
@@ -4440,7 +4446,7 @@ function notificationsView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="ntBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Сповіщення</div>
     </div>
@@ -4484,7 +4490,7 @@ function tasksView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="tkBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Завдання</div>
     </div>
@@ -4523,7 +4529,7 @@ function taskAddView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="taBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Нове завдання</div>
     </div>
@@ -4532,11 +4538,11 @@ function taskAddView(){
   wrap.appendChild(topBar);
 
   wrap.appendChild(el(`<div class="sub text-xs mb-1">Назва</div>`));
-  const titleInput = el(`<input type="text" class="w-full py-2.5 px-3 mb-3" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid #3a3b42" placeholder="Наприклад, Замаринувати куряче філе">`);
+  const titleInput = el(`<input type="text" class="w-full py-2.5 px-3 mb-3" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid rgba(47,65,114,.25)" placeholder="Наприклад, Замаринувати куряче філе">`);
   wrap.appendChild(titleInput);
 
   wrap.appendChild(el(`<div class="sub text-xs mb-1">Опис</div>`));
-  const descInput = el(`<textarea class="w-full py-2.5 px-3 mb-3" rows="3" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid #3a3b42;resize:vertical" placeholder="Деталі завдання"></textarea>`);
+  const descInput = el(`<textarea class="w-full py-2.5 px-3 mb-3" rows="3" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid rgba(47,65,114,.25);resize:vertical" placeholder="Деталі завдання"></textarea>`);
   wrap.appendChild(descInput);
 
   wrap.appendChild(el(`<div class="sub text-xs mb-1">Крайня дата виконання</div>`));
@@ -4616,7 +4622,7 @@ function scheduleCalendarView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="scBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Графік змін</div>
     </div>
@@ -4628,11 +4634,11 @@ function scheduleCalendarView(){
   const monthNav = el(`
     <div class="flex items-center justify-between mb-3">
       <button id="scPrev" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-semibold">${SCHEDULE_MONTH_NAMES[cur.month]} ${cur.year}</div>
       <button id="scNext" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
       </button>
     </div>
   `);
@@ -4703,7 +4709,7 @@ function scheduleLocationView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="slocBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">${escapeHtml(loc ? loc.name : 'Локація')}</div>
     </div>
@@ -4754,7 +4760,7 @@ function scheduleDayView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="sdBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">${formatScheduleDate(key)}</div>
     </div>
@@ -4882,7 +4888,7 @@ function inventoryStartView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="ivBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Інвентаризація</div>
     </div>
@@ -4971,7 +4977,7 @@ function transferStartView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="trBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Поставка</div>
     </div>
@@ -5081,7 +5087,7 @@ function transferListView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="tlBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Поставки</div>
     </div>
@@ -5167,7 +5173,7 @@ function transferReceiveView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="trvBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Прийом поставки</div>
     </div>
@@ -5218,7 +5224,7 @@ function productionStartView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="prBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">${escapeHtml(title)}</div>
     </div>
@@ -5476,7 +5482,7 @@ function productionLinksView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="plBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Зв'язки готовки</div>
     </div>
@@ -5567,7 +5573,7 @@ function productionDetailView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="pdBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">${inProcess ? 'Готовка в процесі' : (isOwner() ? 'Готовка' : 'Готовка завершена')}</div>
     </div>
@@ -5682,7 +5688,7 @@ function inventoryDetailView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="idBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Інвентаризація</div>
     </div>
@@ -5737,7 +5743,7 @@ function ingredientAddView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-5">
       <button id="iaBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">${editing?'Редагування інгредієнта':'Новий інгредієнт'}</div>
     </div>
@@ -5982,11 +5988,11 @@ function startSelfTaskAdd(){
   showModal((card, close)=>{
     card.appendChild(el(`<div class="font-bold mb-3" style="font-size:1.05rem">Нова задача собі</div>`));
     card.appendChild(el(`<div class="sub text-xs mb-1">Назва</div>`));
-    const titleInput = el(`<input type="text" class="w-full py-2.5 px-3 mb-3" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid #3a3b42" placeholder="Наприклад, Перевірити пошту">`);
+    const titleInput = el(`<input type="text" class="w-full py-2.5 px-3 mb-3" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid rgba(47,65,114,.25)" placeholder="Наприклад, Перевірити пошту">`);
     card.appendChild(titleInput);
 
     card.appendChild(el(`<div class="sub text-xs mb-1">Опис (необов'язково)</div>`));
-    const descInput = el(`<textarea class="w-full py-2.5 px-3 mb-3" rows="2" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid #3a3b42;resize:vertical" placeholder="Деталі"></textarea>`);
+    const descInput = el(`<textarea class="w-full py-2.5 px-3 mb-3" rows="2" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid rgba(47,65,114,.25);resize:vertical" placeholder="Деталі"></textarea>`);
     card.appendChild(descInput);
 
     card.appendChild(el(`<div class="sub text-xs mb-1">Крайня дата виконання (необов'язково)</div>`));
@@ -6055,7 +6061,7 @@ function prepDashboardView(){
   const pending = pendingTransfersFor(state.currentWarehouse);
   if(pending.length>0){
     const banner = el(`
-      <div class="card p-3 mb-4" style="background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.3);cursor:pointer">
+      <div class="card p-3 mb-4" style="background:rgba(232,163,23,.14);border:1px solid rgba(232,163,23,.35);cursor:pointer">
         <div class="font-semibold text-sm">⚠ Нова поставка: ${pending.length} шт. очікує прийому</div>
         <div class="sub text-xs mt-0.5">Перевірте фактичну кількість і підтвердіть прийом</div>
       </div>
@@ -6172,7 +6178,7 @@ function settingsView(){
   const locGrid = el(`<div class="grid grid-cols-2 gap-3 mb-6"></div>`);
 
   const addLocCard = el(`
-    <div class="p-4 flex items-center justify-center text-center" style="border:1.5px dashed #3a3b42; border-radius:20px; min-height:64px; cursor:pointer">
+    <div class="p-4 flex items-center justify-center text-center" style="border:1.5px dashed rgba(47,65,114,.25); border-radius:20px; min-height:64px; cursor:pointer">
       <span class="sub text-sm font-medium">+ Додати нову локацію</span>
     </div>
   `);
@@ -6207,7 +6213,7 @@ function settingsView(){
   const whGrid = el(`<div class="grid grid-cols-2 gap-3 mb-6"></div>`);
 
   const addWhCard = el(`
-    <div class="p-4 flex items-center justify-center text-center" style="border:1.5px dashed #3a3b42; border-radius:20px; min-height:64px; cursor:pointer">
+    <div class="p-4 flex items-center justify-center text-center" style="border:1.5px dashed rgba(47,65,114,.25); border-radius:20px; min-height:64px; cursor:pointer">
       <span class="sub text-sm font-medium">+ Додати склад</span>
     </div>
   `);
@@ -6304,7 +6310,7 @@ function staffEditView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-5">
       <button id="seBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Редагування співробітника</div>
     </div>
@@ -6455,7 +6461,7 @@ function locationEditView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-5">
       <button id="leBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Редагування локації</div>
     </div>
@@ -6508,7 +6514,7 @@ function locationAddView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-5">
       <button id="laBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Нова локація</div>
     </div>
@@ -6548,7 +6554,7 @@ function warehouseAddView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-5">
       <button id="waBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Новий склад</div>
     </div>
@@ -6596,7 +6602,7 @@ function warehouseEditView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-5">
       <button id="weBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Редагування складу</div>
     </div>
@@ -6666,7 +6672,7 @@ function menuSettingsView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-4">
       <button id="mBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">Меню і ціни</div>
     </div>
@@ -6733,7 +6739,7 @@ function productAddView(){
   const topBar = el(`
     <div class="flex items-center gap-3 mb-5">
       <button id="paBack" class="navicon-btn" style="background:var(--card3)">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#f5f5f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <div class="font-bold" style="font-size:1.1rem">${editing?'Редагування товару':'Новий товар'}</div>
     </div>
@@ -6912,7 +6918,7 @@ function productAddView(){
       // ще варіант у цей слот (напр. інший напій) — вибір зі списку всіх позицій меню
       const cands = comboCandidates().filter(x=>!sl.productIds.includes(x.id));
       if(cands.length){
-        const addBox = el(`<div class="mt-2 pt-2" style="border-top:1px solid #2a2b31"><div class="sub text-xs mb-1.5">Додати ще варіант на вибір</div><div data-sel class="mb-2"></div></div>`);
+        const addBox = el(`<div class="mt-2 pt-2" style="border-top:1px solid rgba(47,65,114,.12)"><div class="sub text-xs mb-1.5">Додати ще варіант на вибір</div><div data-sel class="mb-2"></div></div>`);
         const sel = customSelect(cands.map(x=>({value:x.id, label:x.name})), null, null);
         addBox.querySelector('[data-sel]').appendChild(sel);
         const addBtn = el(`<button type="button" class="btn-line w-full py-2">+ Додати варіант</button>`);
@@ -6975,7 +6981,7 @@ function productAddView(){
       });
       // додавання варіанта
       let kind = 'ingredient';
-      const addBox = el(`<div class="mt-2 pt-2" style="border-top:1px solid #2a2b31"></div>`);
+      const addBox = el(`<div class="mt-2 pt-2" style="border-top:1px solid rgba(47,65,114,.12)"></div>`);
       const kindHost = el(`<div></div>`);
       const refHost = el(`<div class="mb-2"></div>`);
       const inpStyle = 'width:100%;min-width:0;box-sizing:border-box;border-radius:10px;background:var(--card2);color:var(--text);border:none;padding:10px 12px;font-size:.9rem';
