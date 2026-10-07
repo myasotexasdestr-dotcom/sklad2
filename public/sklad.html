@@ -393,7 +393,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.9';
+const APP_VERSION='2026-10-07.10';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -3443,7 +3443,18 @@ function curLocOf(id){
 function startPurchaseFlow(){
   // Закупівля більше не вимагає відкритої зміни — оприбуткування товару не залежить від того,
   // чи веде касир зараз продажі.
+  // Касир закуповує ЛИШЕ на склад точки, де він сьогодні на зміні (за «Графіком змін»).
+  const u = curUser();
+  if(u && u.role==='cashier' && !cashierShiftLocationId()){
+    appAlert('Закупівля доступна тільки на точці, де ви сьогодні на зміні. Вас не призначено в «Графіку змін» — зверніться до власника.');
+    return;
+  }
   view = 'purchaseCreate'; render();
+}
+function cashierShiftLocationId(){
+  const u = curUser();
+  const e = u ? todayScheduleFor(u.id) : null;
+  return e ? e.locationId : null;
 }
 
 function purchaseView(){
@@ -3487,7 +3498,11 @@ function purchaseCreateView(){
 
   let whId;
   if(isCashier){
-    whId = state.activeLocationId;
+    whId = warehouseForLocation(cashierShiftLocationId());
+    if(!cashierShiftLocationId()){
+      wrap.appendChild(el(`<div class="card p-4 mb-4 sub">Закупівля доступна тільки на точці, де ви сьогодні на зміні. Вас не призначено в «Графіку змін».</div>`));
+      return wrap;
+    }
     const whName = (state.warehouses.find(w=>w.id===whId)||{}).name || '';
     wrap.appendChild(el(`<div class="sub text-xs mb-1.5">Зараховуємо на</div>`));
     wrap.appendChild(el(`<div class="card p-3 mb-4" style="font-weight:700">${escapeHtml(whName)}</div>`));
