@@ -417,7 +417,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.18';
+const APP_VERSION='2026-10-07.19';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2829,7 +2829,7 @@ function dashboardView(){
   wrap.appendChild(el(`<div class="sec-head"><div class="sec-title">Швидкі дії</div></div>`));
   const qa = el(`<div class="qa-row"></div>`);
   [['receipt','Checkbox',()=>{ cbUi.cfg=null; view='checkbox'; render(); }],['purchase','Закупівлі',()=>{view='purchase';render();}],
-   ['stock','Склад',()=>{view='stock';render();}],['dashboard','Аналітика',()=>{view='analytics';render();}]].forEach(([ic,label,fn])=>{
+   ['truck','Glovo',()=>{ glovoTab='sales'; view='glovo'; render(); }],['dashboard','Аналітика',()=>{view='analytics';render();}]].forEach(([ic,label,fn])=>{
     const b = el(`<button class="qa"><span class="qa-c">${ICONS[ic]}</span><span>${label}</span></button>`);
     b.onclick = fn; qa.appendChild(b);
   });
@@ -3941,6 +3941,16 @@ function stockView(){
       // рендериться окремо, перед цим екраном). Показуємо ЗАВЖДИ, навіть якщо ще жодного дня не
       // відпрацьовано — тоді 0.
       const myPeriodKeyForSalary = periodKeyForDateKey(localDateKey(new Date()));
+      wrap.appendChild(el(`<div class="sec-head"><div class="sec-title">Швидкі дії</div></div>`));
+      const cqa = el(`<div class="qa-row"></div>`);
+      [['truck','Glovo',()=>{ glovoTab='sales'; view='glovo'; render(); }],
+       ['purchase','Закупівля',()=> startPurchaseFlow()],
+       ['calendar','Графік',()=>{ view='scheduleCalendar'; render(); }],
+       ['transfer','Запит',()=>{ view='cashierRequest'; render(); }]].forEach(([ic,label,fn])=>{
+        const b = el(`<button class="qa"><span class="qa-c">${ICONS[ic]}</span><span>${label}</span></button>`);
+        b.onclick = fn; cqa.appendChild(b);
+      });
+      wrap.appendChild(cqa);
       const salary = cashierSalaryForPeriod(u0.id, myPeriodKeyForSalary);
       wrap.appendChild(el(`
         <div class="card p-4 mb-4 text-center">
@@ -3994,9 +4004,6 @@ function stockView(){
       ratingCard.onclick = ()=>{ view='myRating'; render(); };
       wrap.appendChild(ratingCard);
 
-      const glBtn = el(`<button class="w-full btn-solid py-3.5 mb-4">🛵 Продажі Glovo</button>`);
-      glBtn.onclick = ()=>{ glovoTab='sales'; view='glovo'; render(); };
-      wrap.appendChild(glBtn);
       // «+ Закупівля», «Графік змін» і «Запросити поставку» тепер живуть на власних вкладках
       // нижнього меню («Закупка», «Графік змін», «Запросити поставку»), а не тут кнопками.
     }
