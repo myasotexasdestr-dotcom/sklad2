@@ -169,11 +169,11 @@ function loadLocalSession(){
     const raw = localStorage.getItem(SESSION_KEY);
     if(raw) return JSON.parse(raw);
   }catch(e){}
-  return { token:null, currentUserId:null, currentLocation:null, currentWarehouse:null, activeLocationId:null };
+  return { s:0, currentUserId:null, currentLocation:null, currentWarehouse:null, activeLocationId:null };
 }
 function saveLocalSession(){
   try{
-    const snap = { token: authToken };
+    const snap = { s: authToken ? 1 : 0 }; // лише ознака «була сесія»; сам токен — в HttpOnly-cookie, JS його не бачить
     LOCAL_ONLY_KEYS.forEach(k=>{ snap[k] = state[k]; });
     localStorage.setItem(SESSION_KEY, JSON.stringify(snap));
   }catch(e){}
@@ -181,11 +181,10 @@ function saveLocalSession(){
 
 async function api(path, opts){
   opts = opts || {};
-  const headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
-  if(authToken) headers['Authorization'] = 'Bearer '+authToken;
+  const headers = Object.assign({'Content-Type':'application/json', 'X-Sklad':'1'}, opts.headers||{});
   let res;
   try{
-    res = await fetch(path, Object.assign({}, opts, { headers }));
+    res = await fetch(path, Object.assign({}, opts, { headers, credentials:'same-origin' }));
   }catch(e){
     return { ok:false, status:0, networkError:true, body:null };
   }
@@ -196,7 +195,7 @@ async function api(path, opts){
 
 const DEFAULT_STATE = {
   locations: [{id:'loc1', name:'Точка 1'}],
-  staff: [{id:'own1', name:'Власник', pin:'0000', role:'owner', locationId:'loc1'}],
+  staff: [{id:'own1', name:'Власник', role:'owner', locationId:'loc1'}],
   currentLocation: 'loc1',
   stockItems: [], recipeIngredients: [], history: [], sales: [], products: [], orders: []
 };
@@ -372,6 +371,14 @@ async function flushStateToServer(){
     stateVersion = r.body.version;
     lastSyncedJSON = json;
     lastSyncError = null;
+    // Відкритий пін пішов на сервер лише раз — там він захешований; з пам'яті клієнта прибираємо.
+    if((payload.staff||[]).some(x=>x && x.pin) && !saveDebounceTimer && !saveQueuedAgain){
+      if(await fetchStateFromServer()) render();
+    }
+  } else if(r.status===400 && r.body && (r.body.error==='pin_taken' || r.body.error==='pin_format')){
+    const msg = r.body.error==='pin_taken' ? 'Такий пін вже зайнятий — оберіть інший. Зміни пін-коду не збережено.' : 'Пін має складатися з 4-6 цифр.';
+    if(await fetchStateFromServer()) render();
+    appAlert(msg);
   } else if(r.status===409){
     // Хтось інший зберіг зміни раніше нас — підтягуємо свіжі дані й перемальовуємо.
     stateVersion = r.body.version;
@@ -419,7 +426,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.20';
+const APP_VERSION='2026-10-07.21';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -691,8 +698,8 @@ async function login(pin){
   // Пін більше не звіряється на клієнті (до логіну клієнт взагалі не бачить чужих даних) — сервер сам
   // перевіряє пін проти свого штату і видає токен сесії.
   const loginRes = await api('/api/auth/login', { method:'POST', body: JSON.stringify({ pin }) });
-  if(!loginRes.ok || !loginRes.body || !loginRes.body.token) return false;
-  authToken = loginRes.body.token;
+  if(!loginRes.ok || !loginRes.body || !loginRes.body.staffId) return false;
+  authToken = true; // сесія тримається в HttpOnly-cookie
   const staffId = loginRes.body.staffId;
   const loaded = await fetchStateFromServer();
   if(!loaded){ authToken = null; return false; }
@@ -772,7 +779,6 @@ function setDefaultWarehouse(id){
 }
 
 function addStaff(name, pin, role, locationId){
-  if(state.staff.some(s=>s.pin===pin)){ appAlert('Такий пін вже зайнятий, оберіть інший'); return; }
   state.staff.push({id:uid(), name, pin, role, locationId, position:'', avatar:''});
   logEvent('staff', `Додано співробітника: ${name} (${roleLabel(role)})`);
   saveState(); render();
@@ -2774,7 +2780,7 @@ function dashboardView(){
   const wrap = el(`<div></div>`);
 
   const me = curUser();
-  if(me && me.pin==='0000'){
+  if(me && me.pinDefault){
     const warn = el(`<div class="card p-3 mb-3" style="border:1px solid rgba(229,72,77,.35)"><div class="font-semibold text-sm" style="color:var(--danger)">Стандартний ПІН 0000</div><div class="sub text-xs mt-0.5">Будь-хто, хто знає адресу застосунку, може зайти як власник. Змініть ПІН: Налаштування → Персонал → ваш профіль.</div></div>`);
     wrap.appendChild(warn);
   }
@@ -7347,7 +7353,7 @@ function staffEditView(){
     wrap.appendChild(el(`<div class="sub text-xs mb-4">Роль: Власник · це єдиний власник, роль не можна змінити</div>`));
   }
 
-  const pinField = field('Пін-код', s.pin, '4-6 цифр');
+  const pinField = field('Новий пін-код', '', s.hasPin ? 'Залиште порожнім, щоб не змінювати' : '4-6 цифр');
   const pinInput = pinField.querySelector('input');
   pinInput.setAttribute('inputmode','numeric');
   wrap.appendChild(pinField);
@@ -7360,12 +7366,11 @@ function staffEditView(){
     const name = nameInput.value.trim();
     if(!name){ err.textContent = "Введіть ім'я"; return; }
     const pin = pinInput.value.trim();
-    if(!pin){ err.textContent = 'Введіть пін-код'; return; }
-    const taken = state.staff.some(x=>x.id!==s.id && x.pin===pin);
-    if(taken){ err.textContent = 'Такий пін вже зайнятий'; return; }
+    if(!pin && !s.hasPin){ err.textContent = 'Введіть пін-код'; return; }
+    if(pin && !/^\d{4,6}$/.test(pin)){ err.textContent = 'Пін — 4-6 цифр'; return; }
     s.name = name;
     s.position = posInput.value.trim();
-    s.pin = pin;
+    if(pin){ s.pin = pin; s.hasPin = true; delete s.pinDefault; } // відкритий пін йде на сервер один раз і там хешується
     s.avatar = avatarInput.value.trim();
     if(!roleLocked){
       s.role = draftRole;
@@ -8055,7 +8060,7 @@ function productAddView(){
 async function boot(){
   render(); // "Завантаження…" одразу, поки йде запит
   const sess = loadLocalSession();
-  authToken = sess.token;
+  authToken = !!sess.s;
   LOCAL_ONLY_KEYS.forEach(k=>{ if(sess[k]!==undefined) state[k] = sess[k]; });
 
   if(!authToken){

@@ -52,7 +52,7 @@ db.exec(`
 // збереже назад — розширена схема в базі з'явиться сама, нічого тут вручну перелічувати не треба.
 const DEFAULT_STATE = {
   locations: [{ id: 'loc1', name: 'Точка 1' }],
-  staff: [{ id: 'own1', name: 'Власник', pin: '0000', role: 'owner', locationId: 'loc1' }],
+  staff: [{ id: 'own1', name: 'Власник', pin: '0000', role: 'owner', locationId: 'loc1' }], // pin → хеш при міграції нижче
   currentLocation: 'loc1',
   stockItems: [],
   recipeIngredients: [],
@@ -118,6 +118,92 @@ setInterval(() => {
 }, 10 * 60 * 1000).unref();
 
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
+
+// ---- ПІН-коди: на сервері зберігаються ТІЛЬКИ як хеші scrypt (pinHash), у відкритому вигляді — ніколи,
+// і жодному клієнту (навіть власнику) вони не віддаються. Власник може лише встановити новий пін.
+function hashPin(pin) {
+  const salt = crypto.randomBytes(16);
+  return 'scrypt:' + salt.toString('hex') + ':' + crypto.scryptSync(String(pin), salt, 32).toString('hex');
+}
+function verifyPin(pin, stored) {
+  if (typeof stored !== 'string') return false;
+  const [kind, saltHex, hashHex] = stored.split(':');
+  if (kind !== 'scrypt' || !saltHex || !hashHex) return false;
+  const want = Buffer.from(hashHex, 'hex');
+  const got = crypto.scryptSync(String(pin), Buffer.from(saltHex, 'hex'), want.length);
+  return want.length === got.length && crypto.timingSafeEqual(want, got);
+}
+// Міграція: старі відкриті піни в стані та в резервних копіях замінюємо хешами.
+function migratePinsInData(data) {
+  let changed = false;
+  (data.staff || []).forEach(x => {
+    if (x && typeof x.pin === 'string') { if (x.pin && !x.pinHash) x.pinHash = hashPin(x.pin); delete x.pin; changed = true; }
+  });
+  return changed;
+}
+(function migratePins() {
+  const row = getStateStmt.get();
+  const d = JSON.parse(row.data);
+  if (migratePinsInData(d)) updateStateStmt.run(JSON.stringify(d), row.version + 1, Date.now(), row.version);
+  db.prepare('SELECT id, data FROM state_backups').all().forEach(b => {
+    try { const bd = JSON.parse(b.data); if (migratePinsInData(bd)) db.prepare('UPDATE state_backups SET data = ? WHERE id = ?').run(JSON.stringify(bd), b.id); } catch (e) {}
+  });
+})();
+// Що можна віддати клієнту: без пінів і хешів; для самого користувача — прапорець «стандартний пін 0000».
+function sanitizeOut(data, role, staffId) {
+  const copy = Object.assign({}, data);
+  copy.staff = (data.staff || []).map(x => {
+    const o = Object.assign({}, x);
+    delete o.pin; delete o.pinHash;
+    o.hasPin = !!x.pinHash;
+    if (x.id === staffId && x.pinHash && verifyPin('0000', x.pinHash)) o.pinDefault = true;
+    return o;
+  });
+  return copy;
+}
+// Приймаємо від клієнта: новий пін (поле pin, відкритим текстом, лише при встановленні) → хеш;
+// для решти — хеш бере зі старих даних за id. Клієнтським pinHash/hasPin/pinDefault не довіряємо.
+function applyIncomingPins(newStaff, oldStaff) {
+  const oldById = new Map((oldStaff || []).map(x => [x.id, x]));
+  const out = [];
+  for (const x of newStaff) {
+    if (!x || typeof x !== 'object') continue;
+    const o = Object.assign({}, x);
+    const prev = oldById.get(o.id);
+    const plain = typeof o.pin === 'string' ? o.pin.trim() : '';
+    delete o.pin; delete o.pinHash; delete o.hasPin; delete o.pinDefault;
+    if (plain) {
+      if (!/^\d{4,6}$/.test(plain)) return { error: 'pin_format' };
+      o.pinHash = hashPin(plain);
+      o._plain = plain;
+    } else if (prev && prev.pinHash) {
+      o.pinHash = prev.pinHash;
+    }
+    out.push(o);
+  }
+  // унікальність пінів серед усіх співробітників
+  for (const x of out) {
+    if (!x._plain) continue;
+    if (out.some(y => y !== x && y.pinHash && verifyPin(x._plain, y.pinHash))) return { error: 'pin_taken' };
+  }
+  out.forEach(x => { delete x._plain; });
+  return { staff: out };
+}
+
+// Токен сесії живе лише в HttpOnly+Secure+SameSite=Strict cookie — скрипт сторінки (і будь-який XSS)
+// не може його прочитати; у localStorage/JS його немає.
+const COOKIE_NAME = 'sklad_sid';
+function readCookie(req, name) {
+  const h = req.headers['cookie'] || '';
+  for (const part of h.split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return null;
+}
+function setSessionCookie(res, token, maxAgeSec) {
+  res.setHeader('Set-Cookie', COOKIE_NAME + '=' + token + '; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=' + maxAgeSec);
+}
 const app = express();
 app.disable('x-powered-by');
 app.use((req, res, next) => {
@@ -126,11 +212,18 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
   next();
 });
+app.use((req, res, next) => {
+  // Захист від CSRF: зміни приймаємо лише зі сторінки застосунку (кастомний заголовок, який чужі сайти
+  // не можуть додати без CORS), додатково до SameSite=Strict.
+  if (req.path.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers['x-sklad'] !== '1') {
+    return res.status(403).json({ error: 'csrf' });
+  }
+  next();
+});
 app.use(express.json({ limit: '8mb' }));
 
 function requireAuth(req, res, next) {
-  const header = req.headers['authorization'] || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const token = readCookie(req, COOKIE_NAME);
   if (!token) return res.status(401).json({ error: 'no_token' });
   const row = findSessionStmt.get(token);
   if (!row) return res.status(401).json({ error: 'invalid_token' });
@@ -153,17 +246,18 @@ app.post('/api/auth/login', (req, res) => {
 
   const row = getStateStmt.get();
   const data = JSON.parse(row.data);
-  const staff = (data.staff || []).find(s => typeof s.pin === 'string' && s.pin.length === pin.length &&
-    crypto.timingSafeEqual(Buffer.from(s.pin), Buffer.from(pin)));
+  const staff = (data.staff || []).find(x => verifyPin(pin, x.pinHash));
   if (!staff) { registerLoginFailure(ip); return res.status(401).json({ error: 'invalid_pin' }); }
 
   const token = crypto.randomBytes(32).toString('hex');
   insertSessionStmt.run(token, staff.id, Date.now());
-  res.json({ token, staffId: staff.id });
+  setSessionCookie(res, token, Math.floor(SESSION_TTL_MS / 1000));
+  res.json({ staffId: staff.id });
 });
 
 app.post('/api/auth/logout', requireAuth, (req, res) => {
   deleteSessionStmt.run(req.token);
+  setSessionCookie(res, '', 0);
   res.status(204).end();
 });
 
@@ -182,12 +276,7 @@ function stripManualSales(newData, oldData, role) {
     newData[k] = newData[k].filter(x => x && (oldIds.has(x.id) || x.checkboxId || (glovoOk && x.source === 'glovo' && x.glovoId)));
   });
 }
-// Не-власник не бачить чужих пінів (інакше будь-який касир міг би зайти як власник).
-function redactForNonOwner(data) {
-  const copy = Object.assign({}, data);
-  copy.staff = (data.staff || []).map(x => Object.assign({}, x, { pin: '' }));
-  return copy;
-}
+// (піни й хеші не віддаються нікому — див. sanitizeOut)
 // Усе змінене не-власником у розділах, що належать власнику, ігнорується (на сервері, а не лише в інтерфейсі).
 const OWNER_ONLY_KEYS = ['staff', 'locations', 'shiftSchedule', 'productionLinks', 'allowNegativeStock', 'glovo'];
 function protectOwnerData(newData, oldData) {
@@ -203,7 +292,7 @@ app.get('/api/state', requireAuth, (req, res) => {
   const row = getStateStmt.get();
   const data = JSON.parse(row.data);
   const role = staffRole(data, req.staffId);
-  res.json({ version: row.version, data: role === 'owner' ? data : redactForNonOwner(data) });
+  res.json({ version: row.version, data: sanitizeOut(data, role, req.staffId) });
 });
 
 const lastBackupAt = { t: 0 };
@@ -221,15 +310,18 @@ app.put('/api/state', requireAuth, (req, res) => {
     // Хтось інший встиг зберегти між тим, як клієнт завантажив дані і тепер надсилає свої —
     // повертаємо актуальну версію+дані, клієнт сам вирішує, що робити (sklad.html: перезаписує
     // локальний стан свіжим і повідомляє користувача).
-    return res.status(409).json({ version: current.version, data: role === 'owner' ? currentData : redactForNonOwner(currentData) });
+    return res.status(409).json({ version: current.version, data: sanitizeOut(currentData, role, req.staffId) });
   }
   stripManualSales(newData, currentData, role);
   if (role !== 'owner') {
     newData = protectOwnerData(newData, currentData);
   } else {
     // Власник не може випадково (або зловмисно) лишити систему без жодного власника.
-    const staff = newData.staff;
-    if (!Array.isArray(staff) || !staff.some(x => x && x.role === 'owner' && typeof x.pin === 'string' && x.pin)) {
+    if (!Array.isArray(newData.staff)) return res.status(400).json({ error: 'owner_required' });
+    const r = applyIncomingPins(newData.staff, currentData.staff);
+    if (r.error) return res.status(400).json({ error: r.error });
+    newData.staff = r.staff;
+    if (!newData.staff.some(x => x.role === 'owner' && x.pinHash)) {
       return res.status(400).json({ error: 'owner_required' });
     }
   }
@@ -246,7 +338,7 @@ app.put('/api/state', requireAuth, (req, res) => {
   const info = updateStateStmt.run(json, newVersion, nowMs, current.version);
   if (info.changes === 0) {
     const fresh = getStateStmt.get();
-    return res.status(409).json({ version: fresh.version, data: role === 'owner' ? JSON.parse(fresh.data) : redactForNonOwner(JSON.parse(fresh.data)) });
+    return res.status(409).json({ version: fresh.version, data: sanitizeOut(JSON.parse(fresh.data), role, req.staffId) });
   }
   res.json({ version: newVersion });
 });
