@@ -412,7 +412,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.13';
+const APP_VERSION='2026-10-07.14';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2744,6 +2744,11 @@ function analyticsView(){
 function dashboardView(){
   const wrap = el(`<div></div>`);
 
+  const me = curUser();
+  if(me && me.pin==='0000'){
+    const warn = el(`<div class="card p-3 mb-3" style="border:1px solid rgba(229,72,77,.35)"><div class="font-semibold text-sm" style="color:var(--danger)">Стандартний ПІН 0000</div><div class="sub text-xs mt-0.5">Будь-хто, хто знає адресу застосунку, може зайти як власник. Змініть ПІН: Налаштування → Персонал → ваш профіль.</div></div>`);
+    wrap.appendChild(warn);
+  }
   const dateKey = dateKeyFromOffset(dashboardOffset);
   const headRow = el(`
     <div class="flex items-center justify-between mb-3">

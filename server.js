@@ -24,6 +24,7 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
+try { fs.chmodSync(DATA_DIR, 0o700); fs.chmodSync(DB_PATH, 0o600); } catch (e) {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS app_state (
@@ -31,6 +32,12 @@ db.exec(`
     data TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
     updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS state_backups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    version INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    created_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
@@ -67,33 +74,58 @@ if (seedIfEmpty.c === 0) {
 const getStateStmt = db.prepare('SELECT data, version FROM app_state WHERE id = 1');
 const updateStateStmt = db.prepare('UPDATE app_state SET data = ?, version = ?, updated_at = ? WHERE id = 1 AND version = ?');
 const insertSessionStmt = db.prepare('INSERT INTO sessions (token, staff_id, created_at) VALUES (?, ?, ?)');
-const findSessionStmt = db.prepare('SELECT staff_id FROM sessions WHERE token = ?');
+const findSessionStmt = db.prepare('SELECT staff_id, created_at FROM sessions WHERE token = ?');
 const deleteSessionStmt = db.prepare('DELETE FROM sessions WHERE token = ?');
 
 // ---- Дуже простий rate-limit на логін (по IP), щоб пін (усього 4-6 цифр) не перебирали в лоб через
 // публічний https-домен. Не розрахований на розподілену атаку з багатьох IP — для внутрішнього
 // інструменту на невелику команду цього достатньо; тримати стан у пам'яті процесу тут ок.
-const loginAttempts = new Map(); // ip -> { count, windowStart }
+const loginFailures = new Map(); // ip -> { count, windowStart }
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_MAX_ATTEMPTS = 20;
-function checkRateLimit(ip) {
+const LOGIN_MAX_FAILURES_PER_IP = 10;
+const LOGIN_MAX_FAILURES_GLOBAL = 150; // захист від перебору піна з багатьох IP (4-6 цифр — мало)
+let globalFail = { count: 0, windowStart: Date.now() };
+function clientIp(req) {
+  // Сервер стоїть за Cloudflare/Caddy: справжній IP клієнта — у заголовку, а не в сокеті.
+  const cf = req.headers['cf-connecting-ip'];
+  if (cf) return String(cf).trim();
+  const xff = req.headers['x-forwarded-for'];
+  if (xff) return String(xff).split(',')[0].trim();
+  return req.socket.remoteAddress || 'unknown';
+}
+function loginBlocked(ip) {
   const now = Date.now();
-  const rec = loginAttempts.get(ip);
-  if (!rec || now - rec.windowStart > LOGIN_WINDOW_MS) {
-    loginAttempts.set(ip, { count: 1, windowStart: now });
-    return true;
-  }
-  rec.count++;
-  return rec.count <= LOGIN_MAX_ATTEMPTS;
+  if (now - globalFail.windowStart > LOGIN_WINDOW_MS) globalFail = { count: 0, windowStart: now };
+  if (globalFail.count >= LOGIN_MAX_FAILURES_GLOBAL) return true;
+  const rec = loginFailures.get(ip);
+  if (!rec || now - rec.windowStart > LOGIN_WINDOW_MS) return false;
+  return rec.count >= LOGIN_MAX_FAILURES_PER_IP;
+}
+function registerLoginFailure(ip) {
+  const now = Date.now();
+  const rec = loginFailures.get(ip);
+  if (!rec || now - rec.windowStart > LOGIN_WINDOW_MS) loginFailures.set(ip, { count: 1, windowStart: now });
+  else rec.count++;
+  globalFail.count++;
 }
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, rec] of loginAttempts) {
-    if (now - rec.windowStart > LOGIN_WINDOW_MS) loginAttempts.delete(ip);
+  for (const [ip, rec] of loginFailures) {
+    if (now - rec.windowStart > LOGIN_WINDOW_MS) loginFailures.delete(ip);
   }
+  // Сесії живуть 30 днів, потім видаляються.
+  db.prepare('DELETE FROM sessions WHERE created_at < ?').run(now - SESSION_TTL_MS);
 }, 10 * 60 * 1000).unref();
 
+const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
 const app = express();
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 app.use(express.json({ limit: '8mb' }));
 
 function requireAuth(req, res, next) {
@@ -102,25 +134,30 @@ function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'no_token' });
   const row = findSessionStmt.get(token);
   if (!row) return res.status(401).json({ error: 'invalid_token' });
+  if (Date.now() - row.created_at > SESSION_TTL_MS) { deleteSessionStmt.run(token); return res.status(401).json({ error: 'expired' }); }
+  // Якщо співробітника видалили — його сесія одразу перестає діяти.
+  const stNow = JSON.parse(getStateStmt.get().data);
+  if (!(stNow.staff || []).some(x => x.id === row.staff_id)) { deleteSessionStmt.run(token); return res.status(401).json({ error: 'invalid_token' }); }
   req.staffId = row.staff_id;
   req.token = token;
   next();
 }
 
 app.post('/api/auth/login', (req, res) => {
-  const ip = req.ip || req.socket.remoteAddress || 'unknown';
-  if (!checkRateLimit(ip)) {
+  const ip = clientIp(req);
+  if (loginBlocked(ip)) {
     return res.status(429).json({ error: 'too_many_attempts' });
   }
   const pin = String((req.body && req.body.pin) || '').trim();
-  if (!pin) return res.status(400).json({ error: 'pin_required' });
+  if (!pin || pin.length > 32) return res.status(400).json({ error: 'pin_required' });
 
   const row = getStateStmt.get();
   const data = JSON.parse(row.data);
-  const staff = (data.staff || []).find(s => s.pin === pin);
-  if (!staff) return res.status(401).json({ error: 'invalid_pin' });
+  const staff = (data.staff || []).find(s => typeof s.pin === 'string' && s.pin.length === pin.length &&
+    crypto.timingSafeEqual(Buffer.from(s.pin), Buffer.from(pin)));
+  if (!staff) { registerLoginFailure(ip); return res.status(401).json({ error: 'invalid_pin' }); }
 
-  const token = crypto.randomBytes(24).toString('hex');
+  const token = crypto.randomBytes(32).toString('hex');
   insertSessionStmt.run(token, staff.id, Date.now());
   res.json({ token, staffId: staff.id });
 });
@@ -130,34 +167,74 @@ app.post('/api/auth/logout', requireAuth, (req, res) => {
   res.status(204).end();
 });
 
+function staffRole(data, staffId) {
+  const st = (data.staff || []).find(x => x.id === staffId);
+  return st ? st.role : null;
+}
+// Не-власник не бачить чужих пінів (інакше будь-який касир міг би зайти як власник).
+function redactForNonOwner(data) {
+  const copy = Object.assign({}, data);
+  copy.staff = (data.staff || []).map(x => Object.assign({}, x, { pin: '' }));
+  return copy;
+}
+// Усе змінене не-власником у розділах, що належать власнику, ігнорується (на сервері, а не лише в інтерфейсі).
+const OWNER_ONLY_KEYS = ['staff', 'locations', 'shiftSchedule', 'productionLinks', 'allowNegativeStock'];
+function protectOwnerData(newData, oldData) {
+  const out = Object.assign({}, newData);
+  OWNER_ONLY_KEYS.forEach(k => { if (oldData[k] === undefined) delete out[k]; else out[k] = oldData[k]; });
+  // Checkbox: зіставлення й перемикачі — лише власник; службові лічильники/каталог позицій — можна.
+  const oc = oldData.checkbox || {}, nc = newData.checkbox || {};
+  out.checkbox = Object.assign({}, nc, { registerMap: oc.registerMap || {}, itemMap: oc.itemMap || {}, blockManual: oc.blockManual, registers: oc.registers || [], enabled: oc.enabled });
+  return out;
+}
+
 app.get('/api/state', requireAuth, (req, res) => {
   const row = getStateStmt.get();
-  res.json({ version: row.version, data: JSON.parse(row.data) });
+  const data = JSON.parse(row.data);
+  const role = staffRole(data, req.staffId);
+  res.json({ version: row.version, data: role === 'owner' ? data : redactForNonOwner(data) });
 });
 
+const lastBackupAt = { t: 0 };
 app.put('/api/state', requireAuth, (req, res) => {
   const body = req.body || {};
   const clientVersion = Number(body.version);
-  const newData = body.data;
+  let newData = body.data;
   if (!newData || typeof newData !== 'object' || Array.isArray(newData)) {
     return res.status(400).json({ error: 'invalid_data' });
   }
   const current = getStateStmt.get();
+  const currentData = JSON.parse(current.data);
+  const role = staffRole(currentData, req.staffId);
   if (clientVersion !== current.version) {
     // Хтось інший встиг зберегти між тим, як клієнт завантажив дані і тепер надсилає свої —
     // повертаємо актуальну версію+дані, клієнт сам вирішує, що робити (sklad.html: перезаписує
     // локальний стан свіжим і повідомляє користувача).
-    return res.status(409).json({ version: current.version, data: JSON.parse(current.data) });
+    return res.status(409).json({ version: current.version, data: role === 'owner' ? currentData : redactForNonOwner(currentData) });
+  }
+  if (role !== 'owner') {
+    newData = protectOwnerData(newData, currentData);
+  } else {
+    // Власник не може випадково (або зловмисно) лишити систему без жодного власника.
+    const staff = newData.staff;
+    if (!Array.isArray(staff) || !staff.some(x => x && x.role === 'owner' && typeof x.pin === 'string' && x.pin)) {
+      return res.status(400).json({ error: 'owner_required' });
+    }
+  }
+  // Резервна копія стану не частіше ніж раз на 15 хвилин (зберігаємо ~добу), щоб помилковий/шкідливий
+  // запис не знищив дані остаточно.
+  const nowMs = Date.now();
+  if (nowMs - lastBackupAt.t > 15 * 60 * 1000) {
+    lastBackupAt.t = nowMs;
+    db.prepare('INSERT INTO state_backups (version, data, created_at) VALUES (?, ?, ?)').run(current.version, current.data, nowMs);
+    db.prepare('DELETE FROM state_backups WHERE id NOT IN (SELECT id FROM state_backups ORDER BY id DESC LIMIT 96)').run();
   }
   const newVersion = current.version + 1;
-  const now = Date.now();
   const json = JSON.stringify(newData);
-  const info = updateStateStmt.run(json, newVersion, now, current.version);
+  const info = updateStateStmt.run(json, newVersion, nowMs, current.version);
   if (info.changes === 0) {
-    // Гонка: хтось оновив рівно між нашим SELECT і UPDATE. better-sqlite3 синхронний і однопотоковий
-    // у межах процесу Node, тож таке практично неможливо, але про всяк випадок — той самий 409.
     const fresh = getStateStmt.get();
-    return res.status(409).json({ version: fresh.version, data: JSON.parse(fresh.data) });
+    return res.status(409).json({ version: fresh.version, data: role === 'owner' ? JSON.parse(fresh.data) : redactForNonOwner(JSON.parse(fresh.data)) });
   }
   res.json({ version: newVersion });
 });
@@ -346,7 +423,14 @@ app.put('/api/checkbox/config', requireAuth, requireOwner, (req, res) => {
   if (typeof b.login === 'string') cbSet('login', b.login.trim());
   if (typeof b.password === 'string' && b.password) cbSet('password', b.password);
   if (typeof b.accessKey === 'string') cbSet('access_key', b.accessKey.trim());
-  if (typeof b.baseUrl === 'string') cbSet('base_url', b.baseUrl.trim());
+  if (typeof b.baseUrl === 'string') {
+    const u = b.baseUrl.trim();
+    // Захист від SSRF: логін/пароль Checkbox відправляються лише на офіційні адреси Checkbox.
+    if (u && !process.env.CHECKBOX_ALLOW_ANY_URL && !/^https:\/\/api\.checkbox\.(ua|in\.ua)\/?$/.test(u)) {
+      return res.status(400).json({ error: 'bad_base_url' });
+    }
+    cbSet('base_url', u);
+  }
   cbToken = null;
   res.json({ ok: true });
 });
@@ -426,7 +510,7 @@ app.post('/api/checkbox/claim', requireAuth, (req, res) => {
 });
 app.post('/api/checkbox/confirm', requireAuth, (req, res) => {
   const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.slice(0, 100) : [];
-  const upd = db.prepare('UPDATE checkbox_receipts SET applied = 1 WHERE id = ?');
+  const upd = db.prepare('UPDATE checkbox_receipts SET applied = 1 WHERE id = ? AND claimed_at IS NOT NULL');
   ids.forEach(id => upd.run(String(id)));
   res.json({ ok: true });
 });
@@ -436,6 +520,10 @@ app.get('/api/health', (req, res) => res.json({ ok: true }));
 // Сам клієнт — та ж https-адреса, яку прописуєте в BotFather як Web App URL.
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'sklad.html')));
+
+app.use((err, req, res, next) => {
+  res.status(400).json({ error: 'bad_request' });
+});
 
 app.listen(PORT, () => {
   console.log(`Сервер запущено на порту ${PORT}. БД: ${DB_PATH}`);
