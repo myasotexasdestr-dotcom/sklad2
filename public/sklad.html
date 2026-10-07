@@ -74,10 +74,12 @@
   .hero-num{font-size:2.9rem; font-weight:300; letter-spacing:-.04em; line-height:1.05; margin:0; color:var(--text); white-space:nowrap;}
   .hero-num small{font-size:1.5rem; font-weight:300; color:var(--sub); margin-left:4px;}
   .hero-locs{border-top:1px solid rgba(47,65,114,.08); padding-top:8px;}
-  .hero-loc{display:flex; gap:6px; font-size:.72rem; color:var(--sub); line-height:1.7;}
-  .hero-loc span:first-child{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .hero-loc span:nth-child(2){color:var(--text); font-weight:600; min-width:70px; text-align:right;}
-  .hero-loc span:nth-child(3){font-weight:700; min-width:70px; text-align:right;}
+  .hero-loc{display:flex; align-items:center; gap:6px; font-size:.72rem; color:var(--sub); line-height:1.9;}
+  .hero-loc .hl-name{max-width:64px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex-shrink:0;}
+  .hero-loc .hl-sum{color:var(--text); font-weight:600; white-space:nowrap;}
+  .hero-loc .hl-gap{flex:1; min-width:4px;}
+  .hero-loc .hl-gv{display:flex; align-items:center; gap:5px; white-space:nowrap;}
+  .hero-loc .hl-gv b{font-weight:700;}
   .hero-chk{background:var(--accent); color:#fff; border:none; border-radius:999px; padding:2px 10px; font-size:.68rem; font-weight:600; margin-left:4px; flex-shrink:0; line-height:1.5;}
   .pill-chip{display:inline-flex; align-items:center; gap:6px; background:rgba(255,255,255,.85); border:1px solid var(--line); border-radius:999px; padding:6px 12px; font-size:.72rem; font-weight:500; color:var(--sub);}
   .pill-chip b{color:var(--text); font-weight:700;}
@@ -417,7 +419,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.19';
+const APP_VERSION='2026-10-07.20';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2800,7 +2802,8 @@ function dashboardView(){
     const day = dailyMetrics(loc.id, dateKey);
     return { loc, ff: day.metrics.turnoverByCategory.fastfood||0, meat: day.metrics.turnoverByCategory.meat||0,
              turnover: day.metrics.turnover, count: day.metrics.ordersCount,
-             lp: locationProfit(loc.id, o=>o.dateKey===dateKey) };
+             lp: locationProfit(loc.id, o=>o.dateKey===dateKey),
+             gv: glovoDayStats(loc.id, dateKey) };
   });
   const totalTurn = perLoc.reduce((x,r)=>x+r.turnover,0);
   const totalProfit = perLoc.reduce((x,r)=>x+r.lp.profit,0);
@@ -2818,7 +2821,7 @@ function dashboardView(){
           <div style="font-weight:700;font-size:1.05rem;color:${totalProfit<0?'var(--danger)':'var(--accent2)'}">${totalProfit<0?'-':''}${fmt(Math.abs(totalProfit))} ₴</div>
         </div>
       </div>
-      <div class="hero-locs">${perLoc.map(r=>`<div class="hero-loc"><span>${escapeHtml(r.loc.name)}</span><span>${fmt(r.turnover)}</span><span style="color:${r.lp.profit<0?'var(--danger)':'var(--accent2)'}">${fmt(r.lp.profit)}</span><button type="button" class="hero-chk" data-loc="${escapeHtml(r.loc.id)}">Чеки ›</button></div>`).join('')}</div>
+      <div class="hero-locs">${perLoc.map(r=>`<div class="hero-loc"><span class="hl-name">${escapeHtml(r.loc.name)}</span><span class="hl-sum">${fmt(r.turnover)}</span><button type="button" class="hero-chk" data-loc="${escapeHtml(r.loc.id)}">Чеки ›</button><span class="hl-gap"></span><span class="hl-gv">🛵 <b>${fmt(r.gv.net)}</b><b style="color:${r.gv.profit<0?'var(--danger)':'var(--accent2)'}">${fmt(r.gv.profit)}</b></span></div>`).join('')}</div>
     </div>
   `);
   hero.querySelectorAll('.hero-chk').forEach(b=>{ b.onclick = (e)=>{ e.stopPropagation(); receiptsLocationId = b.getAttribute('data-loc'); view='receipts'; render(); }; });
@@ -6784,6 +6787,16 @@ let glovoTab = 'sales';   // 'sales' | 'menu'
 let glovoPeriod = 7;
 let glovoDraft = null;
 function glovoCfg(){ return state.glovo; }
+// Glovo за день на точці: чистий оборот (після комісії) і профіт (після собівартості).
+function glovoDayStats(locationId, dateKey){
+  let net = 0, cost = 0;
+  (state.orders||[]).forEach(o=>{
+    if(o.source!=='glovo' || o.locationId!==locationId || o.dateKey!==dateKey) return;
+    net += o.total;
+    (o.items||[]).filter(l=>!l.unmapped).forEach(l=>{ cost += lineUnitCost(l)*l.qty; });
+  });
+  return { net, profit: net - cost };
+}
 function glovoNet(price, pct){ return Number((Number(price)*(1-(Number(pct)||0)/100)).toFixed(2)); }
 function canUseGlovo(){ const u=curUser(); return !!u && (u.role==='owner' || u.role==='cashier'); }
 function glovoLocationForUser(){
