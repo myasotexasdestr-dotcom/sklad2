@@ -344,7 +344,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.7';
+const APP_VERSION='2026-10-07.8';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -3277,14 +3277,15 @@ function orderProductsStep(){
   if(orderDraft.cart.length>0){
     const bar = el(`
       <div class="navbar-pill" style="justify-content:space-between;padding-left:16px;padding-right:16px">
-        <div>
+        <div id="obInfo" style="cursor:pointer">
           <div class="font-bold">${fmtMoney(cartTotal())}</div>
-          <div class="sub text-xs">${cartCount()} поз.</div>
+          <div class="sub text-xs">${cartCount()} поз. · переглянути / видалити</div>
         </div>
         <button id="obNext" class="btn-solid" style="padding:12px 28px">Далі</button>
       </div>
     `);
     bar.querySelector('#obNext').onclick = ()=>{ orderStep='cart'; render(); };
+    bar.querySelector('#obInfo').onclick = ()=>{ orderStep='cart'; render(); };
     wrap.appendChild(bar);
   }
   return wrap;
@@ -3313,9 +3314,11 @@ function orderCartStep(){
           <button data-act="minus" class="w-9 h-9 rounded-full font-bold" style="background:var(--card3);border:none;color:var(--text)">−</button>
           <span class="font-semibold" style="min-width:1.2em;text-align:center">${line.qty}</span>
           <button data-act="plus" class="w-9 h-9 rounded-full font-bold" style="background:var(--card3);border:none;color:var(--text)">+</button>
+          <button data-act="del" aria-label="Видалити" class="w-9 h-9 rounded-full" style="background:rgba(220,60,60,.12);border:none;color:var(--danger);margin-left:4px">🗑</button>
         </div>
       </div>
     `);
+    row.querySelector('[data-act="del"]').onclick = ()=>{ orderDraft.cart = orderDraft.cart.filter(l=>l.id!==line.id); render(); };
     row.querySelector('[data-act="plus"]').onclick = ()=> changeCartQty(line.id, 1);
     row.querySelector('[data-act="minus"]').onclick = ()=> changeCartQty(line.id, -1);
     wrap.appendChild(row);
