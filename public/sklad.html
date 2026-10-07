@@ -338,7 +338,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION = '2026-10-07.3';
+const APP_VERSION = '2026-10-07.4';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2658,7 +2658,7 @@ function dashboardView(){
           <span class="font-bold">${fmtMoney(ff)}</span>
         </div>
         <div class="flex items-center justify-between text-sm mt-2 pt-2" style="border-top:1px solid #2a2b31">
-          <span class="sub">Чистий прибуток</span>
+          <span class="sub">Профіт</span>
           <span class="font-bold" style="color:${lp.profit<0?'var(--danger)':'var(--accent2)'}">${fmtMoney(lp.profit)}</span>
         </div>
       </div>
