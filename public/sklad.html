@@ -286,6 +286,8 @@ function runMigrations(){
   // використовує це як множник бонусу.
   if(!state.shiftRatings) state.shiftRatings = [];
   // Інтеграція Checkbox: зіставлення кас із локаціями, зв'язки позицій чека з меню (ключ позиції → id товару).
+  if(!state.glovo) state.glovo = {};
+  { const gv = state.glovo; if(!Array.isArray(gv.items)) gv.items = []; if(gv.commissionPct===undefined) gv.commissionPct = 36; }
   if(!state.checkbox) state.checkbox = {};
   { const cb = state.checkbox;
     if(!cb.registerMap) cb.registerMap = {};
@@ -415,7 +417,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.17';
+const APP_VERSION='2026-10-07.18';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2304,6 +2306,16 @@ function render(){
     navHost.appendChild(tabbar());
     return;
   }
+  if(view==='glovo'){
+    app.appendChild(glovoView());
+    navHost.appendChild(tabbar());
+    return;
+  }
+  if(view==='glovoAdd'){
+    app.appendChild(glovoAddView());
+    navHost.appendChild(tabbar());
+    return;
+  }
   if(view==='receipts'){
     app.appendChild(receiptsView());
     navHost.appendChild(tabbar());
@@ -2558,7 +2570,7 @@ function tabbar(){
       : (isPrep ? [['prepDashboard','dashboard'],['productionStart','flame'],['prepTransferLocations','transfer'],['myHistory','history']]
         : (isCashier ? [['stock','dashboard'],['purchase','purchase'],['scheduleCalendar','calendar'],['cashierRequest','transfer'],['myHistory','history']]
           : [['stock','stock'],['history','history']])));
-  let activeKey = (view==='menu' || view==='staffEdit' || view==='locationEdit' || view==='locationAdd' || view==='productAdd' || view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare' || view==='productionLinks' || view==='checkbox' || view==='analytics' || view==='auditLog' || view==='shiftRatings' || view==='scheduleCalendar' || view==='scheduleDay' || view==='scheduleLocation' || view==='tasks' || view==='taskAdd') ? 'settings' : view;
+  let activeKey = (view==='menu' || view==='staffEdit' || view==='locationEdit' || view==='locationAdd' || view==='productAdd' || view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare' || view==='productionLinks' || view==='checkbox' || view==='glovo' || view==='glovoAdd' || view==='analytics' || view==='auditLog' || view==='shiftRatings' || view==='scheduleCalendar' || view==='scheduleDay' || view==='scheduleLocation' || view==='tasks' || view==='taskAdd') ? 'settings' : view;
   if(view==='stockItemAdd' || view==='warehouseAdd' || view==='warehouseEdit' || view==='inventoryStart' || view==='inventoryDetail' || view==='writeOffStart' || view==='transferStart' || view==='transferReceive' || view==='productionStart' || view==='ingredientPrepare' || view==='productionDetail' || view==='prepTransferLocations' || view==='locationTransferNeeds') activeKey = isCook ? 'productionList' : 'stock';
   if(view==='shiftAccept' || view==='notifications' || view==='myRating') activeKey = homeView();
   if(!isOwner() && (view==='transferList')) activeKey = 'stock';
@@ -2577,6 +2589,7 @@ function tabbar(){
   if(isOwner() && (view==='transferList' || view==='transferReceive')) activeKey = 'settings';
   if(isOwner() && (view==='productionStart' || view==='productionDetail')) activeKey = 'settings';
   if(view==='locationStock' || view==='receipts') activeKey = 'dashboard';
+  if(!isOwner() && (view==='glovo' || view==='glovoAdd')) activeKey = 'stock';
   // Власник відкрив поставку прямо зі "Складу точки" (картка в Аналітиці) — підсвічуємо той самий таб.
   if(view==='transferStart' && transferReturnTo==='locationStock') activeKey = 'dashboard';
   // "Закупівля" (нове поповнення складу закупівлею) відкрита з Закупівель, або, у касира, з власної вкладки «Закупка».
@@ -3981,6 +3994,9 @@ function stockView(){
       ratingCard.onclick = ()=>{ view='myRating'; render(); };
       wrap.appendChild(ratingCard);
 
+      const glBtn = el(`<button class="w-full btn-solid py-3.5 mb-4">🛵 Продажі Glovo</button>`);
+      glBtn.onclick = ()=>{ glovoTab='sales'; view='glovo'; render(); };
+      wrap.appendChild(glBtn);
       // «+ Закупівля», «Графік змін» і «Запросити поставку» тепер живуть на власних вкладках
       // нижнього меню («Закупка», «Графік змін», «Запросити поставку»), а не тут кнопками.
     }
@@ -6090,12 +6106,12 @@ function historyView(){
     if(h.orderRef){
       let g = groups.get(h.orderRef);
       if(!g){
-        const ord = (state.orders||[]).find(o=>o.checkboxId===h.orderRef);
+        const ord = (state.orders||[]).find(o=>o.checkboxId===h.orderRef || o.glovoId===h.orderRef);
         const card = el(`
           <div class="card p-3 mb-2" style="cursor:pointer">
             <div class="flex items-center justify-between">
               <div>
-                <div class="font-medium">${ord&&ord.isReturn?'↩ Повернення':'🧾 Чек'}${ord&&ord.cashierName?' · '+escapeHtml(ord.cashierName):''}</div>
+                <div class="font-medium">${ord&&ord.source==='glovo'?'🛵 Glovo':(ord&&ord.isReturn?'↩ Повернення':'🧾 Чек')}${ord&&ord.cashierName?' · '+escapeHtml(ord.cashierName):''}</div>
                 <div class="sub text-xs">Списання за продажем · ${escapeHtml(h.ts)}</div>
               </div>
               <div style="text-align:right"><div class="font-bold">${ord?fmtMoney(ord.total):''}</div><div class="sub text-xs rc-n"></div></div>
@@ -6404,6 +6420,60 @@ function cbReceiptApplied(id){
   return (state.orders||[]).some(o=> o.checkboxId===id || String(o.checkboxId||'').startsWith(id+':'));
 }
 // Перетворює чек Checkbox на замовлення(я) + продаж(і) + списання зі складу. Повертає true, якщо щось застосовано.
+// Поля рядка продажу, що залежать від товару меню (тип, рецепт-знімок, собівартість; для комбо — склад слотів).
+function productLineFields(product){
+  const f = { productId: product.id, productType: product.type, category: product.category,
+    recipeSnapshot: product.type==='dish' ? (product.ingredients||[]).map(i=>({...i})) : [],
+    costPriceSnapshot: Number(product.costPrice)||0 };
+  if(product.type==='combo'){
+    // Що саме обрано в комбо, зовнішнє джерело не знає — списуємо першу позицію кожного слота.
+    f.comboSelections = (product.comboSlots||[]).map(sl=>{
+      const sub = state.products.find(x=>x.id===(sl.productIds||[])[0]);
+      return sub ? { slotId:sl.id, slotLabel:sl.label, productId:sub.id, name:sub.name, productType:sub.type,
+        recipeSnapshot: sub.type==='dish' ? (sub.ingredients||[]).map(i=>({...i})) : [], selectedOptions:[] } : null;
+    }).filter(Boolean);
+  }
+  return f;
+}
+// Спільна частина для чеків Checkbox і продажів Glovo: рядки → замовлення (по одному на категорію) + продаж
+// + списання зі складу, прив'язане до замовлення (orderRef в історії складу, consumption в замовленні).
+function recordSaleGroups(o){
+  const { lines, locationId, ms, who, baseId, idKey, comment, source, extra } = o;
+  const cats = {};
+  lines.forEach(l=>{ if(l.category) cats[l.category] = (cats[l.category]||0) + Math.abs(l.price*l.qty); });
+  const mainCat = Object.keys(cats).sort((a,b)=>cats[b]-cats[a])[0] || 'fastfood';
+  const groups = {};
+  lines.forEach(l=>{ const c = l.category || mainCat; (groups[c] = groups[c] || []).push(l); });
+  const catKeys = Object.keys(groups);
+  const d = new Date(ms || Date.now());
+  const ts = d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+  const dateKey = localDateKey(d);
+  const made = [];
+  historyWhoOverride = who;
+  try{
+    catKeys.forEach(cat=>{
+      const items = groups[cat];
+      const total = Number(items.reduce((s,l)=>s+l.price*l.qty,0).toFixed(2));
+      const oid = catKeys.length>1 ? baseId+':'+cat : baseId;
+      const ord = Object.assign({ id: uid(), [idKey]: oid, locationId, category: cat, items, comment: comment||'',
+        total, ts, tsMs: ms||Date.now(), dateKey, who, consumption: [] }, JSON.parse(JSON.stringify(extra||{})));
+      if(source) ord.source = source;
+      state.orders.push(ord);
+      const sale = { id: uid(), locationId, category: cat, amount: total, ts, tsMs: ms||Date.now(), dateKey, who, [idKey]: oid };
+      if(source) sale.source = source;
+      state.sales.push(sale);
+      const consCart = items.filter(l=>!l.unmapped);
+      if(consCart.length){
+        historyRefOverride = oid; historyCapture = [];
+        try{ applySaleConsumption(consCart, warehouseForLocation(locationId)); }
+        finally{ ord.consumption = historyCapture; historyRefOverride = null; historyCapture = null; }
+      }
+      made.push(ord);
+    });
+  } finally { historyWhoOverride = null; }
+  return made;
+}
+// Перетворює чек Checkbox на замовлення(я) + продаж(і) + списання зі складу. Повертає true, якщо щось застосовано.
 function applyCheckboxReceipt(r){
   const cb = state.checkbox;
   if(cbReceiptApplied(r.id)) return false;
@@ -6420,48 +6490,11 @@ function applyCheckboxReceipt(r){
     const base = { id: uid(), name: product ? product.name : g.name, checkboxName: g.name, price: g.price, qty: g.qty*sign,
       modifierId:null, modifierName:null, selectedOptions:[], optionsCostSnapshot:0, optionKey:'', comboSelections:[] };
     if(!product){ cb.stats.unmappedLines++; return Object.assign(base, { productId:null, productType:'unmapped', recipeSnapshot:[], costPriceSnapshot:0, unmapped:true, category:null }); }
-    const line = Object.assign(base, { productId: product.id, productType: product.type, category: product.category,
-      recipeSnapshot: product.type==='dish' ? (product.ingredients||[]).map(i=>({...i})) : [],
-      costPriceSnapshot: Number(product.costPrice)||0 });
-    if(product.type==='combo'){
-      // Що саме обрано в комбо, чек не знає — списуємо першу позицію кожного слота.
-      line.comboSelections = (product.comboSlots||[]).map(sl=>{
-        const sub = state.products.find(x=>x.id===(sl.productIds||[])[0]);
-        return sub ? { slotId:sl.id, slotLabel:sl.label, productId:sub.id, name:sub.name, productType:sub.type,
-          recipeSnapshot: sub.type==='dish' ? (sub.ingredients||[]).map(i=>({...i})) : [], selectedOptions:[] } : null;
-      }).filter(Boolean);
-    }
-    return line;
+    return Object.assign(base, productLineFields(product));
   });
-  // Один чек = одне замовлення на категорію (категорія важлива для каси точки й зарплат).
-  const cats = {};
-  lines.forEach(l=>{ if(l.category) cats[l.category] = (cats[l.category]||0) + Math.abs(l.price*l.qty); });
-  const mainCat = Object.keys(cats).sort((a,b)=>cats[b]-cats[a])[0] || 'fastfood';
-  const groups = {};
-  lines.forEach(l=>{ const c = l.category || mainCat; (groups[c] = groups[c] || []).push(l); });
-  const catKeys = Object.keys(groups);
-  const d = new Date(r.ms || Date.now());
-  const ts = d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-  const dateKey = localDateKey(d);
-  historyWhoOverride = 'Checkbox';
-  try{
-    catKeys.forEach(cat=>{
-      const items = groups[cat];
-      const total = Number(items.reduce((s,l)=>s+l.price*l.qty,0).toFixed(2));
-      const oid = catKeys.length>1 ? r.id+':'+cat : r.id;
-      const ord = { id: uid(), checkboxId: oid, locationId, category: cat, items, comment: 'Checkbox'+(r.fiscalCode?' · '+r.fiscalCode:'')+(r.isReturn?' · ПОВЕРНЕННЯ':''),
-        total, ts, tsMs: r.ms||Date.now(), dateKey, who:'Checkbox', cashierName: r.cashier||'', isReturn: !!r.isReturn, consumption: [] };
-      state.orders.push(ord);
-      state.sales.push({ id: uid(), locationId, category: cat, amount: total, ts, tsMs: r.ms||Date.now(), dateKey, who:'Checkbox', checkboxId: oid });
-      const consCart = items.filter(l=>!l.unmapped);
-      if(consCart.length){
-        // Списання прив'язуємо до цього чека: і в історії складу (orderRef), і в самому замовленні (consumption).
-        historyRefOverride = oid; historyCapture = [];
-        try{ applySaleConsumption(consCart, warehouseForLocation(locationId)); }
-        finally{ ord.consumption = historyCapture; historyRefOverride = null; historyCapture = null; }
-      }
-    });
-  } finally { historyWhoOverride = null; }
+  recordSaleGroups({ lines, locationId, ms: r.ms, who:'Checkbox', baseId: r.id, idKey:'checkboxId',
+    comment: 'Checkbox'+(r.fiscalCode?' · '+r.fiscalCode:'')+(r.isReturn?' · ПОВЕРНЕННЯ':''),
+    extra: { cashierName: r.cashier||'', isReturn: !!r.isReturn } });
   cb.stats.applied++;
   return true;
 }
@@ -6693,7 +6726,7 @@ function receiptsView(){
       <div class="card p-3 mb-2" style="cursor:pointer">
         <div class="flex items-center justify-between">
           <div>
-            <div class="font-medium">${o.isReturn?'↩ Повернення':'🧾 Чек'}${o.cashierName?' · '+escapeHtml(o.cashierName):''}</div>
+            <div class="font-medium">${o.source==='glovo'?'🛵 Glovo':(o.isReturn?'↩ Повернення':'🧾 Чек')}${o.cashierName?' · '+escapeHtml(o.cashierName):''}</div>
             <div class="sub text-xs">${escapeHtml(o.ts)} · ${fmt(cnt)} поз.${o.who&&o.who!=='Checkbox'?' · '+escapeHtml(o.who):''}</div>
           </div>
           <div style="text-align:right">
@@ -6734,6 +6767,294 @@ function receiptsView(){
   return wrap;
 }
 
+// =====================================================================================
+// Продажі Glovo: замовлення з Glovo вносяться вручну. Ціни в Glovo відрізняються від меню, а Glovo
+// утримує комісію (за замовчуванням 36%). Тому для кожної позиції Glovo задається «ціна Glovo» і
+// зв'язок із товаром меню; у виручку йде ЧИСТА сума (ціна Glovo мінус комісія), а собівартість і
+// списання складу беруться з уже готового розрахунку зв'язаного товару меню.
+// =====================================================================================
+let glovoTab = 'sales';   // 'sales' | 'menu'
+let glovoPeriod = 7;
+let glovoDraft = null;
+function glovoCfg(){ return state.glovo; }
+function glovoNet(price, pct){ return Number((Number(price)*(1-(Number(pct)||0)/100)).toFixed(2)); }
+function canUseGlovo(){ const u=curUser(); return !!u && (u.role==='owner' || u.role==='cashier'); }
+function glovoLocationForUser(){
+  const u = curUser();
+  if(u && u.role==='cashier') return cashierShiftLocationId() || state.activeLocationId || (state.locations[0]||{}).id;
+  return state.currentLocation && state.locations.find(l=>l.id===state.currentLocation) ? state.currentLocation : (state.locations[0]||{}).id;
+}
+function applyGlovoOrder(d){
+  const g = glovoCfg();
+  const pct = Number(d.commissionPct);
+  const lines = d.items.map(it=>{
+    const gi = g.items.find(x=>x.id===it.itemId);
+    if(!gi) return null;
+    const product = gi.productId ? state.products.find(p=>p.id===gi.productId) : null;
+    const base = { id: uid(), name: product ? product.name : gi.name, glovoName: gi.name, glovoPrice: gi.price,
+      price: glovoNet(gi.price, pct), qty: it.qty, modifierId:null, modifierName:null, selectedOptions:[], optionsCostSnapshot:0, optionKey:'', comboSelections:[] };
+    if(!product) return Object.assign(base, { productId:null, productType:'unmapped', recipeSnapshot:[], costPriceSnapshot:0, unmapped:true, category:null });
+    return Object.assign(base, productLineFields(product));
+  }).filter(Boolean);
+  if(!lines.length) return null;
+  const gross = Number(lines.reduce((s,l)=>s+l.glovoPrice*l.qty,0).toFixed(2));
+  const orders = recordSaleGroups({ lines, locationId: d.locationId, ms: d.ms, who: (curUser()||{}).name || 'Glovo', baseId: 'g'+uid(), idKey: 'glovoId',
+    comment: 'Glovo'+(d.comment?' · '+d.comment:''), source: 'glovo', extra: { glovo: { gross, commissionPct: pct } } });
+  orders.forEach(o=>{ o.glovo.gross = Number(o.items.reduce((s,l)=>s+l.glovoPrice*l.qty,0).toFixed(2)); o.glovo.commission = Number((o.glovo.gross - o.total).toFixed(2)); });
+  logEvent('glovo', 'Продаж Glovo: '+fmtMoney(orders.reduce((s,o)=>s+o.total,0))+' (чисто)');
+  return orders;
+}
+function deleteGlovoOrder(order){
+  // Повертаємо на склад списане й прибираємо замовлення та його продаж.
+  const back = (order.items||[]).filter(l=>!l.unmapped).map(l=>({ ...l, qty: -l.qty }));
+  historyWhoOverride = (curUser()||{}).name || null;
+  try{ if(back.length) applySaleConsumption(back, warehouseForLocation(order.locationId)); } finally { historyWhoOverride = null; }
+  state.orders = state.orders.filter(o=>o.id!==order.id);
+  state.sales = state.sales.filter(s=>s.glovoId!==order.glovoId);
+  logEvent('glovo', 'Видалено продаж Glovo: '+fmtMoney(order.total));
+}
+
+function glovoView(){
+  const wrap = el(`<div></div>`);
+  const owner = isOwner();
+  const topBar = el(`
+    <div class="flex items-center gap-3 mb-4">
+      <button id="gvBack" class="navicon-btn" style="background:var(--card3)">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="font-bold" style="font-size:1.1rem">Продажі Glovo</div>
+    </div>
+  `);
+  topBar.querySelector('#gvBack').onclick = ()=>{ view = owner ? 'settings' : homeView(); render(); };
+  wrap.appendChild(topBar);
+  if(!canUseGlovo()){ wrap.appendChild(el(`<div class="sub text-sm">Недоступно для вашої ролі.</div>`)); return wrap; }
+  const g = glovoCfg();
+  if(owner){
+    wrap.appendChild(segmentedPicker([['sales','Продажі'],['menu','Меню Glovo']], glovoTab, (k)=>{ glovoTab=k; render(); }));
+  } else glovoTab = 'sales';
+
+  if(glovoTab==='menu' && owner){
+    // --- Комісія ---
+    const comm = el(`<div class="card p-4 mb-4"><div class="font-semibold text-sm mb-1">Комісія Glovo, %</div><div class="sub text-xs mb-2">Від ціни Glovo віднімається при кожному продажі — у виручку йде чиста сума. Для окремого продажу її можна змінити.</div></div>`);
+    const cin = el(`<input type="number" step="0.1" min="0" max="100" class="w-full">`);
+    cin.value = g.commissionPct;
+    cin.addEventListener('change', ()=>{ const v = Number(cin.value); if(isFinite(v) && v>=0 && v<=100){ g.commissionPct = v; saveState(); render(); } });
+    comm.appendChild(cin); wrap.appendChild(comm);
+    wrap.appendChild(el(`<div class="sec-head"><div class="sec-title">Позиції Glovo</div></div>`));
+    const add = el(`<button class="btn-solid w-full py-3 mb-3">+ Додати позицію Glovo</button>`);
+    add.onclick = ()=> openGlovoItemEdit(null);
+    wrap.appendChild(add);
+    if(!g.items.length) wrap.appendChild(el(`<div class="sub text-sm text-center py-6">Позицій ще немає. Додайте: назва в Glovo, ціна Glovo й товар меню, з якого рахується собівартість.</div>`));
+    g.items.slice().sort((a,b)=>a.name.localeCompare(b.name,'uk')).forEach(gi=>{
+      const p = gi.productId ? state.products.find(x=>x.id===gi.productId) : null;
+      const net = glovoNet(gi.price, g.commissionPct);
+      const cost = p ? (Number(p.costPrice)||0) : 0;
+      const card = el(`
+        <div class="card p-3 mb-2" style="cursor:pointer">
+          <div class="flex items-center justify-between">
+            <div style="min-width:0"><div class="font-semibold text-sm">${escapeHtml(gi.name)}</div>
+              <div class="sub text-xs">${p?'меню: '+escapeHtml(p.name):'<span class="low">без зв\'язку з меню</span>'}</div></div>
+            <div style="text-align:right"><div class="font-bold text-sm">${fmtMoney(gi.price)} → ${fmtMoney(net)}</div>
+              <div class="sub text-xs">${p?'собівартість '+fmtMoney(cost)+' · профіт '+fmtMoney(net-cost):''}</div></div>
+          </div>
+        </div>
+      `);
+      card.onclick = ()=> openGlovoItemEdit(gi.id);
+      wrap.appendChild(card);
+    });
+    return wrap;
+  }
+
+  // --- Продажі ---
+  const addBtn = el(`<button class="btn-solid w-full py-3 mb-4">+ Додати продаж Glovo</button>`);
+  addBtn.onclick = ()=>{
+    if(!g.items.length){ appAlert(owner ? 'Спершу додайте позиції Glovo у вкладці «Меню Glovo».' : 'Власник ще не додав позиції Glovo.'); return; }
+    glovoDraft = { locationId: glovoLocationForUser(), items: [], commissionPct: g.commissionPct, whenStr: '', comment: '' };
+    view = 'glovoAdd'; render();
+  };
+  wrap.appendChild(addBtn);
+  wrap.appendChild(segmentedPicker([[1,'Сьогодні'],[7,'7 днів'],[30,'30 днів']].map(x=>[String(x[0]),x[1]]), String(glovoPeriod), (k)=>{ glovoPeriod = Number(k); render(); }));
+  const u = curUser();
+  const orders = (state.orders||[]).filter(o=> o.source==='glovo' && dateKeyInRange(o.dateKey, glovoPeriod)
+      && (owner || (u && o.locationId===glovoLocationForUser())))
+    .sort((a,b)=>(b.tsMs||0)-(a.tsMs||0));
+  const gross = orders.reduce((s,o)=>s+((o.glovo||{}).gross||0),0);
+  const net = orders.reduce((s,o)=>s+o.total,0);
+  const cost = orders.reduce((s,o)=> s + (o.items||[]).filter(l=>!l.unmapped).reduce((c,l)=>c+lineUnitCost(l)*l.qty,0), 0);
+  wrap.appendChild(el(`
+    <div class="card p-4 mb-4">
+      <div class="flex items-center justify-between mb-2"><span class="sub text-xs">Замовлень: ${orders.length}</span></div>
+      <div class="flex items-center justify-between text-sm mb-1"><span class="sub">Сума в Glovo</span><b>${fmtMoney(gross)}</b></div>
+      <div class="flex items-center justify-between text-sm mb-1"><span class="sub">Комісія</span><b style="color:var(--danger)">−${fmtMoney(gross-net)}</b></div>
+      <div class="flex items-center justify-between text-sm mb-1"><span class="sub">Чистий оборот</span><b>${fmtMoney(net)}</b></div>
+      <div class="flex items-center justify-between text-sm"><span class="sub">Профіт (після собівартості)</span><b style="color:${net-cost<0?'var(--danger)':'var(--accent2)'}">${fmtMoney(net-cost)}</b></div>
+    </div>
+  `));
+  if(!orders.length) wrap.appendChild(el(`<div class="sub text-center py-8">За цей період продажів Glovo немає</div>`));
+  orders.forEach(o=>{
+    const loc = (state.locations.find(l=>l.id===o.locationId)||{}).name || '';
+    const oc = (o.items||[]).filter(l=>!l.unmapped).reduce((c,l)=>c+lineUnitCost(l)*l.qty,0);
+    const card = el(`
+      <div class="card p-3 mb-2" style="cursor:pointer">
+        <div class="flex items-center justify-between">
+          <div><div class="font-medium">🛵 Glovo${loc?' · '+escapeHtml(loc):''}</div><div class="sub text-xs">${escapeHtml(o.ts)} · ${escapeHtml(o.who||'')} · ${(o.items||[]).reduce((s,l)=>s+l.qty,0)} поз.</div></div>
+          <div style="text-align:right"><div class="font-bold">${fmtMoney(o.total)}</div><div class="sub text-xs">Glovo ${fmtMoney((o.glovo||{}).gross||0)} · профіт ${fmtMoney(o.total-oc)}</div></div>
+        </div>
+        <div class="gv-lines" style="display:none;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)"></div>
+      </div>
+    `);
+    const box = card.querySelector('.gv-lines');
+    (o.items||[]).forEach(l=>{
+      box.appendChild(el(`<div class="flex items-start justify-between" style="padding:3px 0"><div style="min-width:0"><div class="text-sm">${escapeHtml(l.glovoName||l.name)} × ${l.qty}</div>${l.glovoName&&l.glovoName!==l.name?`<div class="sub text-xs">меню: ${escapeHtml(l.name)}</div>`:''}</div><div class="text-sm" style="white-space:nowrap;margin-left:8px">${fmtMoney(l.glovoPrice*l.qty)} → <b>${fmtMoney(l.price*l.qty)}</b></div></div>`));
+    });
+    const cons = o.consumption||[];
+    if(cons.length){
+      box.appendChild(el(`<div class="font-semibold text-xs" style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)">Списано зі складу</div>`));
+      cons.forEach(c=> box.appendChild(el(`<div class="flex items-center justify-between text-xs" style="padding:2px 0"><span>${escapeHtml(c.name)}</span><span class="font-semibold" style="color:var(--danger)">${fmt(c.delta)} ${escapeHtml(c.unit||'')}</span></div>`)));
+    }
+    if(o.comment) box.appendChild(el(`<div class="sub text-xs" style="margin-top:6px">${escapeHtml(o.comment)}</div>`));
+    if(owner){
+      const del = el(`<button class="btn-line w-full py-2 mt-3" style="color:var(--danger)">Видалити продаж (склад повернеться)</button>`);
+      del.onclick = (e)=>{ e.stopPropagation(); appConfirm('Видалити цей продаж Glovo? Списання зі складу буде скасовано.', ()=>{ deleteGlovoOrder(o); saveState(); render(); }); };
+      box.appendChild(del);
+    }
+    card.addEventListener('click', ()=>{ box.style.display = box.style.display==='none' ? 'block' : 'none'; });
+    wrap.appendChild(card);
+  });
+  return wrap;
+}
+
+function openGlovoItemEdit(id){
+  const g = glovoCfg();
+  const editing = id ? g.items.find(x=>x.id===id) : null;
+  showModal((card, close)=>{
+    card.appendChild(el(`<div class="font-bold mb-3" style="font-size:1.05rem">${editing?'Редагувати':'Нова'} позиція Glovo</div>`));
+    card.appendChild(el(`<div class="sub text-xs mb-1">Назва в Glovo</div>`));
+    const nameIn = el(`<input type="text" class="w-full mb-3" placeholder="Як називається в Glovo">`); nameIn.value = editing?editing.name:''; card.appendChild(nameIn);
+    card.appendChild(el(`<div class="sub text-xs mb-1">Ціна в Glovo, ₴</div>`));
+    const priceIn = el(`<input type="number" step="0.01" min="0" class="w-full mb-1" placeholder="0">`); priceIn.value = editing?editing.price:''; card.appendChild(priceIn);
+    const prev = el(`<div class="sub text-xs mb-3"></div>`); card.appendChild(prev);
+    card.appendChild(el(`<div class="sub text-xs mb-1">Товар у меню (звідси собівартість і списання)</div>`));
+    const sel = customSelect([{value:'',label:'— без зв\'язку —'}].concat(state.products.slice().sort((a,b)=>a.name.localeCompare(b.name,'uk')).map(p=>({value:p.id,label:p.name}))), editing?(editing.productId||''):'', ()=>paint());
+    const selHost = el(`<div class="mb-4"></div>`); selHost.appendChild(sel); card.appendChild(selHost);
+    function paint(){
+      const pr = Number(priceIn.value)||0; const p = state.products.find(x=>x.id===sel.getValue());
+      const net = glovoNet(pr, g.commissionPct);
+      prev.textContent = pr ? ('Чисто після комісії '+g.commissionPct+'%: '+fmtMoney(net)+(p?(' · собівартість '+fmtMoney(Number(p.costPrice)||0)+' · профіт '+fmtMoney(net-(Number(p.costPrice)||0))):'')) : '';
+    }
+    priceIn.addEventListener('input', paint); paint();
+    const err = el(`<div class="text-xs mb-2" style="color:var(--danger)"></div>`); card.appendChild(err);
+    const row = el(`<div class="flex gap-2"></div>`);
+    const save = el(`<button class="btn-solid flex-1 py-3">Зберегти</button>`);
+    save.onclick = ()=>{
+      const name = nameIn.value.trim(); const price = Number(priceIn.value);
+      if(!name){ err.textContent='Вкажіть назву'; return; }
+      if(!(price>0)){ err.textContent='Вкажіть ціну Glovo'; return; }
+      const data = { name, price, productId: sel.getValue()||'' };
+      if(editing) Object.assign(editing, data); else g.items.push(Object.assign({ id: uid() }, data));
+      logEvent('glovo', (editing?'Змінено':'Додано')+' позицію Glovo: '+name);
+      saveState(); close(); render();
+    };
+    row.appendChild(save);
+    if(editing){
+      const del = el(`<button class="btn-line py-3 px-4" style="color:var(--danger)">Видалити</button>`);
+      del.onclick = ()=>{ g.items = g.items.filter(x=>x.id!==editing.id); saveState(); close(); render(); };
+      row.appendChild(del);
+    }
+    card.appendChild(row);
+  });
+}
+
+function glovoAddView(){
+  const wrap = el(`<div></div>`);
+  const g = glovoCfg(); const d = glovoDraft;
+  if(!d){ view='glovo'; return glovoView(); }
+  const topBar = el(`
+    <div class="flex items-center gap-3 mb-4">
+      <button id="gaBack" class="navicon-btn" style="background:var(--card3)"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="font-bold" style="font-size:1.1rem">Новий продаж Glovo</div>
+    </div>`);
+  topBar.querySelector('#gaBack').onclick = ()=>{ glovoDraft=null; view='glovo'; render(); };
+  wrap.appendChild(topBar);
+
+  const owner = isOwner();
+  wrap.appendChild(el(`<div class="sub text-xs mb-1">Точка</div>`));
+  if(owner && state.locations.length>1){
+    const ls = customSelect(state.locations.map(l=>({value:l.id,label:l.name})), d.locationId, (v)=>{ d.locationId = v; });
+    const h = el(`<div class="mb-3"></div>`); h.appendChild(ls); wrap.appendChild(h);
+  } else {
+    wrap.appendChild(el(`<div class="card p-3 mb-3" style="font-weight:700">${escapeHtml((state.locations.find(l=>l.id===d.locationId)||{}).name||'')}</div>`));
+  }
+  wrap.appendChild(el(`<div class="sub text-xs mb-1">Дата й час замовлення</div>`));
+  const dt = el(`<input type="datetime-local" class="w-full mb-3">`);
+  const now = new Date(); now.setMinutes(now.getMinutes()-now.getTimezoneOffset());
+  dt.value = d.whenStr || now.toISOString().slice(0,16);
+  dt.addEventListener('change', ()=>{ d.whenStr = dt.value; });
+  wrap.appendChild(dt);
+
+  wrap.appendChild(el(`<div class="sub text-xs mb-1">Додати позицію</div>`));
+  const opts = g.items.slice().sort((a,b)=>a.name.localeCompare(b.name,'uk')).map(i=>({value:i.id,label:i.name+' — '+fmtMoney(i.price)}));
+  const pick = customSelect(opts, opts[0].value, ()=>{});
+  const addRow = el(`<div class="flex gap-2 mb-3"></div>`);
+  const pickHost = el(`<div style="flex:1;min-width:0"></div>`); pickHost.appendChild(pick);
+  const qtyIn = el(`<input type="number" min="1" step="1" value="1" style="width:70px">`);
+  const addB = el(`<button class="btn-solid px-4">+</button>`);
+  addB.onclick = ()=>{
+    const q = Math.max(1, Math.floor(Number(qtyIn.value)||1)); const id = pick.getValue();
+    const ex = d.items.find(x=>x.itemId===id); if(ex) ex.qty += q; else d.items.push({ itemId:id, qty:q });
+    paintList();
+  };
+  addRow.appendChild(pickHost); addRow.appendChild(qtyIn); addRow.appendChild(addB); wrap.appendChild(addRow);
+
+  const listHost = el(`<div class="mb-3"></div>`); wrap.appendChild(listHost);
+  wrap.appendChild(el(`<div class="sub text-xs mb-1">Комісія Glovo, %</div>`));
+  const cin = el(`<input type="number" step="0.1" min="0" max="100" class="w-full mb-3">`); cin.value = d.commissionPct; wrap.appendChild(cin);
+  const sumHost = el(`<div class="card p-4 mb-3"></div>`); wrap.appendChild(sumHost);
+  wrap.appendChild(el(`<div class="sub text-xs mb-1">Коментар (необов'язково)</div>`));
+  const cm = el(`<input type="text" class="w-full mb-4" placeholder="Наприклад, номер замовлення Glovo">`); cm.value = d.comment; cm.addEventListener('input', ()=>{ d.comment = cm.value; }); wrap.appendChild(cm);
+  const err = el(`<div class="text-xs mb-2" style="color:var(--danger)"></div>`); wrap.appendChild(err);
+
+  function paintList(){
+    listHost.innerHTML = '';
+    d.items.forEach(it=>{
+      const gi = g.items.find(x=>x.id===it.itemId); if(!gi) return;
+      const row = el(`<div class="card p-3 mb-2 flex items-center justify-between gap-2"><div style="min-width:0"><div class="font-semibold text-sm">${escapeHtml(gi.name)}</div><div class="sub text-xs">${fmtMoney(gi.price)} × ${it.qty}</div></div><div class="flex items-center gap-2"><button data-m class="w-9 h-9 rounded-full font-bold" style="background:var(--card3);border:none;color:var(--text)">−</button><span class="font-semibold">${it.qty}</span><button data-p class="w-9 h-9 rounded-full font-bold" style="background:var(--card3);border:none;color:var(--text)">+</button></div></div>`);
+      row.querySelector('[data-m]').onclick = ()=>{ it.qty--; if(it.qty<=0) d.items = d.items.filter(x=>x!==it); paintList(); };
+      row.querySelector('[data-p]').onclick = ()=>{ it.qty++; paintList(); };
+      listHost.appendChild(row);
+    });
+    paintSum();
+  }
+  function paintSum(){
+    const pct = Number(cin.value); d.commissionPct = isFinite(pct) ? pct : g.commissionPct;
+    let gross=0, net=0, cost=0;
+    d.items.forEach(it=>{ const gi=g.items.find(x=>x.id===it.itemId); if(!gi) return; gross += gi.price*it.qty; net += glovoNet(gi.price,d.commissionPct)*it.qty;
+      const p = gi.productId ? state.products.find(x=>x.id===gi.productId) : null; if(p) cost += (Number(p.costPrice)||0)*it.qty; });
+    sumHost.innerHTML = `<div class="flex items-center justify-between text-sm mb-1"><span class="sub">Сума в Glovo</span><b>${fmtMoney(gross)}</b></div>
+      <div class="flex items-center justify-between text-sm mb-1"><span class="sub">Комісія ${fmt(d.commissionPct)}%</span><b style="color:var(--danger)">−${fmtMoney(gross-net)}</b></div>
+      <div class="flex items-center justify-between text-sm mb-1"><span class="sub">Чистий оборот</span><b>${fmtMoney(net)}</b></div>
+      <div class="flex items-center justify-between text-sm"><span class="sub">Профіт</span><b style="color:${net-cost<0?'var(--danger)':'var(--accent2)'}">${fmtMoney(net-cost)}</b></div>`;
+  }
+  cin.addEventListener('input', paintSum);
+  paintList();
+
+  const save = el(`<button class="btn-solid w-full py-3.5 mb-4">Зберегти продаж</button>`);
+  save.onclick = ()=>{
+    if(!d.items.length){ err.textContent = 'Додайте хоча б одну позицію'; return; }
+    const ms = new Date(dt.value).getTime();
+    if(!isFinite(ms)){ err.textContent = 'Вкажіть дату й час'; return; }
+    const pct = Number(cin.value);
+    if(!(pct>=0 && pct<=100)){ err.textContent = 'Комісія має бути від 0 до 100%'; return; }
+    d.commissionPct = pct; d.ms = ms;
+    applyGlovoOrder(d);
+    glovoDraft = null; saveState();
+    showToast('Продаж Glovo збережено', 'success');
+    view = 'glovo'; render();
+  };
+  wrap.appendChild(save);
+  return wrap;
+}
+
 function settingsView(){
   const wrap = el(`<div></div>`);
 
@@ -6747,6 +7068,7 @@ function settingsView(){
     { label: 'Нова готовка', icon: 'flame', action: ()=>{ view='productionStart'; render(); } },
     { label: 'Зв\'язки готовки', icon: 'link', action: ()=>{ view='productionLinks'; render(); } },
     { label: 'Аналітика', icon: 'dashboard', action: ()=>{ view='analytics'; render(); } },
+    { label: 'Продажі Glovo', icon: 'truck', action: ()=>{ glovoTab='sales'; view='glovo'; render(); } },
     { label: 'Checkbox', icon: 'receipt', action: ()=>{ cbUi.cfg=null; view='checkbox'; render(); } },
     { label: 'Графік змін', icon: 'calendar', action: ()=>{ view='scheduleCalendar'; render(); } },
     { label: 'Історія оцінок', icon: 'checklist', action: ()=>{ view='shiftRatings'; render(); } },

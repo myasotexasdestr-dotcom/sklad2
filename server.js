@@ -173,11 +173,13 @@ function staffRole(data, staffId) {
 }
 // Замовлення й продажі створюються ЛИШЕ з чеків Checkbox (мають checkboxId). Будь-які нові записи без
 // нього (спроба створити замовлення вручну чи через API) відкидаються сервером.
-function stripManualSales(newData, oldData) {
+// Виняток — «Продажі Glovo» (source: 'glovo'): їх вносять вручну власник і касир.
+function stripManualSales(newData, oldData, role) {
+  const glovoOk = role === 'owner' || role === 'cashier';
   ['orders', 'sales'].forEach(k => {
     if (!Array.isArray(newData[k])) return;
     const oldIds = new Set((Array.isArray(oldData[k]) ? oldData[k] : []).map(x => x && x.id));
-    newData[k] = newData[k].filter(x => x && (oldIds.has(x.id) || x.checkboxId));
+    newData[k] = newData[k].filter(x => x && (oldIds.has(x.id) || x.checkboxId || (glovoOk && x.source === 'glovo' && x.glovoId)));
   });
 }
 // Не-власник не бачить чужих пінів (інакше будь-який касир міг би зайти як власник).
@@ -187,7 +189,7 @@ function redactForNonOwner(data) {
   return copy;
 }
 // Усе змінене не-власником у розділах, що належать власнику, ігнорується (на сервері, а не лише в інтерфейсі).
-const OWNER_ONLY_KEYS = ['staff', 'locations', 'shiftSchedule', 'productionLinks', 'allowNegativeStock'];
+const OWNER_ONLY_KEYS = ['staff', 'locations', 'shiftSchedule', 'productionLinks', 'allowNegativeStock', 'glovo'];
 function protectOwnerData(newData, oldData) {
   const out = Object.assign({}, newData);
   OWNER_ONLY_KEYS.forEach(k => { if (oldData[k] === undefined) delete out[k]; else out[k] = oldData[k]; });
@@ -221,7 +223,7 @@ app.put('/api/state', requireAuth, (req, res) => {
     // локальний стан свіжим і повідомляє користувача).
     return res.status(409).json({ version: current.version, data: role === 'owner' ? currentData : redactForNonOwner(currentData) });
   }
-  stripManualSales(newData, currentData);
+  stripManualSales(newData, currentData, role);
   if (role !== 'owner') {
     newData = protectOwnerData(newData, currentData);
   } else {
