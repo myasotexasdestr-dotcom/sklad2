@@ -11,7 +11,7 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
     /* Світла «скляна» тема: прохолодний блакитно-сірий фон, білі напівпрозорі картки, темно-синій акцент */
@@ -24,8 +24,8 @@
     padding-bottom:env(safe-area-inset-bottom,0px);
   }
   html{scroll-padding-top:env(safe-area-inset-top,0px); background:#e9eef7;}
-  body{background:linear-gradient(180deg,#f4f7fc 0%,#e6ecf6 50%,#d2dbee 100%) fixed; color:var(--text); font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif; margin:0; min-height:100vh;}
-  .card{background:var(--card2); border-radius:24px; border:1px solid rgba(255,255,255,.85); box-shadow:var(--shadow); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);}
+  body{background:radial-gradient(120% 60% at 85% -5%,#ffffff 0%,rgba(255,255,255,0) 60%),linear-gradient(180deg,#f6f8fd 0%,#e8edf7 45%,#c9d3ea 100%) fixed; letter-spacing:-.01em; color:var(--text); font-family:'Manrope',-apple-system,BlinkMacSystemFont,sans-serif; margin:0; min-height:100vh;}
+  .card{background:linear-gradient(160deg,rgba(255,255,255,.92),rgba(255,255,255,.62)); border-radius:28px; border:1px solid rgba(255,255,255,.85); box-shadow:var(--shadow); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);}
   .card .card{box-shadow:none; background:var(--card3);}
   .sub{color:var(--sub);}
   .low{color:var(--danger);}
@@ -56,12 +56,61 @@
   /* плаваюча «пігулка» навігації знизу — активна вкладка = темно-синє коло з білою іконкою */
   .navbar-pill{position:fixed; left:14px; right:14px; bottom:calc(12px + env(safe-area-inset-bottom,0px)); z-index:50; max-width:420px; margin:0 auto;
     background:rgba(255,255,255,.88); -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px);
-    border:1px solid rgba(255,255,255,.9); border-radius:34px; box-shadow:0 14px 36px rgba(40,60,110,.18);
+    border:1px solid rgba(255,255,255,.9); border-radius:36px; box-shadow:0 14px 36px rgba(40,60,110,.18);
     display:flex; align-items:center; justify-content:space-around; padding:8px 10px;}
   .navicon-btn{width:48px; height:48px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:none; border:none;}
   .navicon-btn svg{width:22px; height:22px; stroke:#8b96ad;}
   .navicon-btn.active{background:var(--accent); box-shadow:0 8px 18px rgba(47,65,114,.35);}
   .navicon-btn.active svg{stroke:#fff;}
+
+  /* ---- Redesign: frosted fintech components ---- */
+  .hero{position:relative; padding:18px 18px 16px; margin-bottom:22px;}
+  .hero-top{display:flex; align-items:center; justify-content:space-between;}
+  .hero-label{display:flex; align-items:center; gap:10px; color:var(--sub); font-size:.8rem; font-weight:500;}
+  .chip-ico{width:30px; height:30px; border-radius:10px; background:rgba(47,65,114,.08); display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+  .chip-ico svg{width:16px; height:16px; stroke:var(--accent);}
+  .round-btn{width:36px; height:36px; border-radius:50%; background:var(--accent); border:none; display:flex; align-items:center; justify-content:center; box-shadow:0 8px 16px rgba(47,65,114,.3); flex-shrink:0;}
+  .round-btn svg{width:16px; height:16px; stroke:#fff;}
+  .hero-num{font-size:2.9rem; font-weight:300; letter-spacing:-.04em; line-height:1.05; margin:34px 0 14px; color:var(--text); white-space:nowrap;}
+  .hero-num small{font-size:1.5rem; font-weight:300; color:var(--sub); margin-left:4px;}
+  .pill-chip{display:inline-flex; align-items:center; gap:6px; background:rgba(255,255,255,.85); border:1px solid var(--line); border-radius:999px; padding:6px 12px; font-size:.72rem; font-weight:500; color:var(--sub);}
+  .pill-chip b{color:var(--text); font-weight:700;}
+  .sec-head{display:flex; align-items:center; justify-content:space-between; margin:4px 2px 12px;}
+  .sec-title{font-size:.95rem; font-weight:700; color:var(--text);}
+  .sec-link{font-size:.8rem; font-weight:500; color:var(--sub); background:none; border:none; padding:0;}
+  .qa-row{display:flex; justify-content:space-between; gap:8px; margin-bottom:24px;}
+  .qa{display:flex; flex-direction:column; align-items:center; gap:8px; background:none; border:none; flex:1; padding:0;}
+  .qa .qa-c{width:60px; height:60px; border-radius:50%; background:linear-gradient(160deg,#fff,rgba(255,255,255,.6)); border:1px solid rgba(255,255,255,.95); box-shadow:0 8px 20px rgba(40,60,110,.10); display:flex; align-items:center; justify-content:center;}
+  .qa .qa-c svg{width:22px; height:22px; stroke:var(--accent);}
+  .qa span{font-size:.74rem; font-weight:500; color:var(--text);}
+  .panel{background:linear-gradient(180deg,rgba(255,255,255,.75) 0%,rgba(190,201,226,.55) 100%); border:1px solid rgba(255,255,255,.9); border-radius:30px; padding:6px 14px; box-shadow:var(--shadow); margin-bottom:22px;}
+  .tx{display:flex; align-items:center; gap:12px; padding:12px 0; cursor:pointer;}
+  .tx + .tx{border-top:1px solid rgba(47,65,114,.08);}
+  .avatar{width:44px; height:44px; border-radius:50%; background:linear-gradient(145deg,#4a5d92,#2f4172); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:.95rem; flex-shrink:0; box-shadow:0 6px 14px rgba(47,65,114,.25);}
+  .avatar.soft{background:linear-gradient(145deg,#fff,#dfe6f4); color:var(--accent); box-shadow:0 4px 10px rgba(40,60,110,.12);}
+  .avatar.soft svg{width:20px; height:20px; stroke:var(--accent);}
+  .avatar.warn{background:linear-gradient(145deg,#fff,#fde3e3); color:var(--danger);}
+  .tx-main{flex:1; min-width:0;}
+  .tx-name{font-weight:600; font-size:.92rem;}
+  .tx-sub{font-size:.74rem; color:var(--sub); margin-top:1px;}
+  .tx-amt{font-weight:700; font-size:.92rem; text-align:right; white-space:nowrap;}
+  /* нижня навігація: підписані іконки + центральна кругла кнопка «+» */
+  .navbar-tabs{padding:8px 8px 8px; border-radius:36px; justify-content:space-between;}
+  .navitem{flex:1; min-width:0; height:auto; border-radius:0; flex-direction:column; gap:3px; padding:4px 0; width:auto;}
+  .navitem .ico{width:38px; height:30px; border-radius:15px; display:flex; align-items:center; justify-content:center;}
+  .navitem svg{width:21px; height:21px; stroke:#8b96ad;}
+  .navitem .lbl{font-size:.62rem; font-weight:600; color:#8b96ad; white-space:nowrap;}
+  .navitem.active, .navitem.active:hover{background:none; box-shadow:none;}
+  .navitem.active .ico{background:var(--accent); box-shadow:0 6px 14px rgba(47,65,114,.32);}
+  .navitem.active svg{stroke:#fff;}
+  .navitem.active .lbl{color:var(--accent);}
+  .navfab{width:58px; height:58px; border-radius:50%; background:linear-gradient(150deg,#41568f,#2a3a68); border:3px solid rgba(255,255,255,.95); box-shadow:0 12px 26px rgba(47,65,114,.45); display:flex; align-items:center; justify-content:center; margin:-22px 6px 0; flex-shrink:0;}
+  .navfab svg{width:26px; height:26px; stroke:#fff; stroke-width:2;}
+  input[type=text], input[type=search], input[type=number], input[type=tel], input[type=password], input:not([type]), textarea, select{
+    font-family:inherit; border-radius:18px; padding:12px 16px; background:rgba(255,255,255,.8); border:1px solid var(--line); color:var(--text); outline:none;}
+  input:focus, textarea:focus, select:focus{border-color:rgba(47,65,114,.45); box-shadow:0 0 0 4px rgba(47,65,114,.08);}
+  button{font-family:inherit;}
+  .page-title{font-size:1.5rem; font-weight:700; letter-spacing:-.03em;}
 </style>
 </head>
 <body>
@@ -344,7 +393,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.8';
+const APP_VERSION='2026-10-07.9';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2417,33 +2466,39 @@ function currentWorkplaceLabel(u){
   }
   return (state.locations.find(l=>l.id===state.activeLocationId)||{}).name || '';
 }
+function userInitials(name){
+  const parts = String(name||'?').trim().split(/\s+/);
+  return ((parts[0]||'?')[0] + (parts[1]?parts[1][0]:'')).toUpperCase();
+}
 function header(){
   const u = curUser();
   const notifCount = isOwner() ? computeNotifications().length : 0;
   const workplace = currentWorkplaceLabel(u);
   const h = el(`
-    <div class="flex items-center justify-between py-3 mb-1">
-      <div>
-        <div class="sub text-sm">Доброго дня,</div>
-        <div style="font-size:1.4rem;font-weight:800;line-height:1.15">${escapeHtml(u.name)}</div>
-        ${!isOwner() ? `<div class="sub text-xs mt-0.5">${escapeHtml(roleLabel(u.role))}${workplace ? ' · '+escapeHtml(workplace) : ''}</div>` : ''}
+    <div class="flex items-center justify-between py-3 mb-2">
+      <div class="flex items-center gap-3" style="min-width:0">
+        <div class="avatar">${escapeHtml(userInitials(u.name))}</div>
+        <div style="min-width:0">
+          <div class="sub" style="font-size:.74rem">З поверненням 👋</div>
+          <div style="font-size:1.12rem;font-weight:700;line-height:1.2;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(u.name)}</div>
+          ${!isOwner() ? `<div class="sub" style="font-size:.7rem">${escapeHtml(roleLabel(u.role))}${workplace ? ' · '+escapeHtml(workplace) : ''}</div>` : ''}
+        </div>
       </div>
       <div class="flex items-center gap-2">
         ${isOwner() ? `
-        <button id="bellBtn" class="navicon-btn" style="background:var(--card3);position:relative">
+        <button id="bellBtn" class="navicon-btn" style="background:rgba(255,255,255,.85);border:1px solid var(--line);position:relative;width:42px;height:42px">
           ${ICONS.bell}
-          ${notifCount>0 ? `<span style="position:absolute;top:2px;right:2px;background:var(--danger);color:#fff;font-size:.6rem;font-weight:800;min-width:16px;height:16px;border-radius:999px;display:flex;align-items:center;justify-content:center;padding:0 3px">${notifCount>9?'9+':notifCount}</span>` : ''}
+          ${notifCount>0 ? `<span style="position:absolute;top:1px;right:1px;background:var(--danger);color:#fff;font-size:.6rem;font-weight:800;min-width:16px;height:16px;border-radius:999px;display:flex;align-items:center;justify-content:center;padding:0 4px">${notifCount}</span>` : ''}
         </button>
         ` : ''}
-        <button id="logoutBtn" class="btn-line" style="padding:8px 16px">Вийти</button>
+        <button id="logoutBtn" class="navicon-btn" aria-label="Вийти" style="background:rgba(255,255,255,.85);border:1px solid var(--line);width:42px;height:42px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        </button>
       </div>
     </div>
   `);
-  if(isOwner()){
-    const bellSvg = h.querySelector('#bellBtn svg');
-    bellSvg.style.width = '17px'; bellSvg.style.height = '17px'; bellSvg.style.stroke = 'var(--sub)';
-    h.querySelector('#bellBtn').onclick = ()=>{ view='notifications'; render(); };
-  }
+  h.querySelectorAll('.navicon-btn svg').forEach(sv=>{ sv.style.width='18px'; sv.style.height='18px'; sv.style.stroke='var(--sub)'; });
+  if(isOwner()) h.querySelector('#bellBtn').onclick = ()=>{ view='notifications'; render(); };
   h.querySelector('#logoutBtn').onclick = logout;
   return h;
 }
@@ -2482,9 +2537,20 @@ function tabbar(){
   if(view==='transferStart' && transferReturnTo==='locationStock') activeKey = 'dashboard';
   // "Закупівля" (нове поповнення складу закупівлею) відкрита з Закупівель, або, у касира, з власної вкладки «Закупка».
   if(view==='purchaseCreate') activeKey = 'purchase';
-  const bar = el(`<div class="navbar-pill"></div>`);
-  tabs.forEach(([key,icon])=>{
-    const b = el(`<button class="navicon-btn ${activeKey===key?'active':''}">${ICONS[icon]}</button>`);
+  const bar = el(`<div class="navbar-pill navbar-tabs"></div>`);
+  const LABELS = { dashboard:'Головна', purchase:'Закупівлі', stock:'Склад', settings:'Ще', productionList:'Готовка',
+    prepDashboard:'Головна', productionStart:'Готовка', prepTransferLocations:'Поставки', myHistory:'Історія',
+    scheduleCalendar:'Графік', cashierRequest:'Запит', history:'Історія' };
+  const canSell = isOwner() || isCashier;
+  const fabAt = canSell ? Math.floor(tabs.length/2) : -1;
+  tabs.forEach(([key,icon],idx)=>{
+    if(idx===fabAt){
+      const fab = el(`<button class="navfab" aria-label="Нове замовлення">${ICONS.plus}</button>`);
+      fab.onclick = ()=> startCreateOrder();
+      bar.appendChild(fab);
+    }
+    const label = (isCashier && key==='stock') ? 'Головна' : (LABELS[key]||'');
+    const b = el(`<button class="navicon-btn navitem ${activeKey===key?'active':''}"><span class="ico">${ICONS[icon]}</span><span class="lbl">${escapeHtml(label)}</span></button>`);
     // Касирова вкладка «Закупка» одразу веде у форму закупівлі, але без відкритої зміни зараховувати
     // нема куди — той самий захист, що й раніше був на кнопці «+ Закупівля».
     if(isCashier && key==='purchase') b.onclick = ()=> startPurchaseFlow();
@@ -2651,7 +2717,7 @@ function dashboardView(){
   const dateKey = dateKeyFromOffset(dashboardOffset);
   const headRow = el(`
     <div class="flex items-center justify-between mb-3">
-      <div class="sub text-sm">Аналітика вашого бізнесу:</div>
+      <div class="page-title">Огляд</div>
       <div class="flex items-center gap-1">
         <button id="dPrev" class="navicon-btn" style="width:26px;height:26px" ${dashboardOffset>=6?'disabled':''}>
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="${dashboardOffset>=6?'#b7c0d3':'var(--text)'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -2667,58 +2733,81 @@ function dashboardView(){
   headRow.querySelector('#dNext').onclick = ()=>{ if(dashboardOffset>0){ dashboardOffset--; render(); } };
   wrap.appendChild(headRow);
 
-  const strip = el(`<div class="flex gap-3 mb-5" style="overflow-x:auto; scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch;"></div>`);
-  state.locations.forEach(loc=>{
+  // --- Велика картка «Виторг за день» (сума по всіх локаціях) ---
+  const perLoc = state.locations.map(loc=>{
     const day = dailyMetrics(loc.id, dateKey);
-    const ff = day.metrics.turnoverByCategory.fastfood||0;
-    const meat = day.metrics.turnoverByCategory.meat||0;
-    const lp = locationProfit(loc.id, o=>o.dateKey===dateKey);
-    const card = el(`
-      <div class="card p-4" style="min-width:180px;flex-shrink:0; scroll-snap-align:start; cursor:pointer">
-        <div class="icon-badge mb-3" style="background:rgba(47,65,114,.10)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l9-4 9 4-9 4-9-4z"/><path d="M3 8v9l9 4 9-4V8"/></svg>
+    return { loc, ff: day.metrics.turnoverByCategory.fastfood||0, meat: day.metrics.turnoverByCategory.meat||0,
+             turnover: day.metrics.turnover, count: day.metrics.ordersCount,
+             lp: locationProfit(loc.id, o=>o.dateKey===dateKey) };
+  });
+  const totalTurn = perLoc.reduce((x,r)=>x+r.turnover,0);
+  const totalProfit = perLoc.reduce((x,r)=>x+r.lp.profit,0);
+  const totalOrders = perLoc.reduce((x,r)=>x+r.count,0);
+  const hero = el(`
+    <div class="card hero">
+      <div class="hero-top">
+        <div class="hero-label"><span class="chip-ico">${ICONS.receipt}</span>Виторг · ${dateLabelFromOffset(dashboardOffset)}</div>
+        <button id="heroGo" class="round-btn" aria-label="Аналітика"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg></button>
+      </div>
+      <div class="hero-num">${fmt(totalTurn)}<small>₴</small></div>
+      <div class="pill-chip">Профіт · <b style="color:${totalProfit<0?'var(--danger)':'var(--accent2)'}">${totalProfit>=0?'':'-'}${fmt(Math.abs(totalProfit))} ₴</b> · ${totalOrders} зам. ›</div>
+    </div>
+  `);
+  hero.querySelector('#heroGo').onclick = ()=>{ view='analytics'; render(); };
+  wrap.appendChild(hero);
+
+  // --- Швидкі дії ---
+  wrap.appendChild(el(`<div class="sec-head"><div class="sec-title">Швидкі дії</div></div>`));
+  const qa = el(`<div class="qa-row"></div>`);
+  [['plus','Замовлення',()=>startCreateOrder()],['purchase','Закупівлі',()=>{view='purchase';render();}],
+   ['stock','Склад',()=>{view='stock';render();}],['dashboard','Аналітика',()=>{view='analytics';render();}]].forEach(([ic,label,fn])=>{
+    const b = el(`<button class="qa"><span class="qa-c">${ICONS[ic]}</span><span>${label}</span></button>`);
+    b.onclick = fn; qa.appendChild(b);
+  });
+  wrap.appendChild(qa);
+
+  // --- Локації (як «Останні транзакції» в зразку) ---
+  wrap.appendChild(el(`<div class="sec-head"><div class="sec-title">Локації</div><button class="sec-link" id="locAll">Усі ›</button></div>`));
+  wrap.querySelector('#locAll').onclick = ()=>{ view='analytics'; render(); };
+  const panel = el(`<div class="panel"></div>`);
+  perLoc.forEach(r=>{
+    const row = el(`
+      <div class="tx">
+        <div class="avatar soft">${ICONS.box}</div>
+        <div class="tx-main">
+          <div class="tx-name">${escapeHtml(r.loc.name)}</div>
+          <div class="tx-sub">М'ясо ${fmtMoney(r.meat)} · Фастфуд ${fmtMoney(r.ff)}</div>
         </div>
-        <div class="font-bold mb-3" style="font-size:.85rem">${escapeHtml(loc.name)}</div>
-        <div class="flex items-center justify-between text-sm mb-1">
-          <span class="sub">М'ясо з Техасу</span>
-          <span class="font-bold">${fmtMoney(meat)}</span>
-        </div>
-        <div class="flex items-center justify-between text-sm">
-          <span class="sub">Фастфуд</span>
-          <span class="font-bold">${fmtMoney(ff)}</span>
-        </div>
-        <div class="flex items-center justify-between text-sm mt-2 pt-2" style="border-top:1px solid rgba(47,65,114,.12)">
-          <span class="sub">Профіт</span>
-          <span class="font-bold" style="color:${lp.profit<0?'var(--danger)':'var(--accent2)'}">${fmtMoney(lp.profit)}</span>
+        <div>
+          <div class="tx-amt">${fmtMoney(r.turnover)}</div>
+          <div class="tx-sub" style="text-align:right">Профіт <b style="color:${r.lp.profit<0?'var(--danger)':'var(--accent2)'}">${fmtMoney(r.lp.profit)}</b></div>
         </div>
       </div>
     `);
-    card.onclick = ()=>{ viewingLocationId = loc.id; view='locationStock'; render(); };
-    strip.appendChild(card);
+    row.onclick = ()=>{ viewingLocationId = r.loc.id; view='locationStock'; render(); };
+    panel.appendChild(row);
   });
-  wrap.appendChild(strip);
-
-  const orderBtn = el(`<button class="w-full btn-solid py-3.5 mb-5">Створити замовлення</button>`);
-  orderBtn.onclick = ()=> startCreateOrder();
-  wrap.appendChild(orderBtn);
+  wrap.appendChild(panel);
 
   const defaultWh = state.warehouses.find(w=>w.id===state.defaultWarehouseId) || state.warehouses[0];
-  wrap.appendChild(el(`<div class="font-bold mb-1" style="font-size:.95rem">Термінові закупки</div>`));
-  wrap.appendChild(el(`<div class="sub text-xs mb-3">Склад: ${escapeHtml(defaultWh?defaultWh.name:'-')}</div>`));
+  wrap.appendChild(el(`<div class="sec-head"><div><div class="sec-title">Термінові закупки</div><div class="tx-sub">Склад: ${escapeHtml(defaultWh?defaultWh.name:'-')}</div></div></div>`));
   const low = lowStockFor(defaultWh ? defaultWh.id : null).map(i=>({
     ...i, whName: (state.warehouses.find(w=>w.id===i.warehouseId)||{}).name || ''
   }));
   if(low.length===0){
-    wrap.appendChild(el(`<div class="sub text-center py-6">Всё в норме, дефицита нет</div>`));
+    wrap.appendChild(el(`<div class="sub text-center py-6">Все в нормі, дефіциту немає</div>`));
   } else {
+    const lp = el(`<div class="panel"></div>`);
     low.forEach(i=>{
-      wrap.appendChild(el(`
-        <div class="card p-3 mb-2">
-          <div class="font-semibold">${escapeHtml(i.name)}</div>
-          <div class="sub text-xs">Залишок: <span class="low font-semibold">${fmt(i.qty)} ${escapeHtml(i.unit)}</span></div>
+      lp.appendChild(el(`
+        <div class="tx" style="cursor:default">
+          <div class="avatar warn">!</div>
+          <div class="tx-main"><div class="tx-name">${escapeHtml(i.name)}</div><div class="tx-sub">Потрібне поповнення</div></div>
+          <div class="tx-amt low">${fmt(i.qty)} ${escapeHtml(i.unit)}</div>
         </div>
       `));
     });
+    wrap.appendChild(lp);
   }
 
   // Задачі власника — під списком термінових закупок. Власник теж може призначити задачу самому
@@ -6095,8 +6184,8 @@ function startSelfTaskAdd(){
 // Включає кнопку «+ Додати собі», щоб кожен міг завести задачу собі без Налаштувань.
 function renderTasksSection(wrap, staffId){
   const headerRow = el(`<div class="flex items-center justify-between mb-2"></div>`);
-  headerRow.appendChild(el(`<div class="font-semibold">Завдання</div>`));
-  const addSelfBtn = el(`<button class="text-sm font-semibold" style="color:var(--accent)">+ Додати собі</button>`);
+  headerRow.appendChild(el(`<div class="sec-title">Завдання</div>`));
+  const addSelfBtn = el(`<button class="sec-link" style="color:var(--accent);font-weight:600">+ Додати собі</button>`);
   addSelfBtn.onclick = ()=> startSelfTaskAdd();
   headerRow.appendChild(addSelfBtn);
   wrap.appendChild(headerRow);
