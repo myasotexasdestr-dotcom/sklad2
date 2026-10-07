@@ -171,6 +171,15 @@ function staffRole(data, staffId) {
   const st = (data.staff || []).find(x => x.id === staffId);
   return st ? st.role : null;
 }
+// Замовлення й продажі створюються ЛИШЕ з чеків Checkbox (мають checkboxId). Будь-які нові записи без
+// нього (спроба створити замовлення вручну чи через API) відкидаються сервером.
+function stripManualSales(newData, oldData) {
+  ['orders', 'sales'].forEach(k => {
+    if (!Array.isArray(newData[k])) return;
+    const oldIds = new Set((Array.isArray(oldData[k]) ? oldData[k] : []).map(x => x && x.id));
+    newData[k] = newData[k].filter(x => x && (oldIds.has(x.id) || x.checkboxId));
+  });
+}
 // Не-власник не бачить чужих пінів (інакше будь-який касир міг би зайти як власник).
 function redactForNonOwner(data) {
   const copy = Object.assign({}, data);
@@ -212,6 +221,7 @@ app.put('/api/state', requireAuth, (req, res) => {
     // локальний стан свіжим і повідомляє користувача).
     return res.status(409).json({ version: current.version, data: role === 'owner' ? currentData : redactForNonOwner(currentData) });
   }
+  stripManualSales(newData, currentData);
   if (role !== 'owner') {
     newData = protectOwnerData(newData, currentData);
   } else {
@@ -258,8 +268,52 @@ db.exec(`
 const cbGetStmt = db.prepare('SELECT value FROM checkbox_config WHERE key = ?');
 const cbSetStmt = db.prepare('INSERT INTO checkbox_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
 const cbDelStmt = db.prepare('DELETE FROM checkbox_config WHERE key = ?');
-function cbGet(k, def) { const r = cbGetStmt.get(k); return r ? r.value : def; }
-function cbSet(k, v) { if (v === null || v === undefined) cbDelStmt.run(k); else cbSetStmt.run(k, String(v)); }
+// Логін, пароль і ключ Checkbox зберігаються лише зашифрованими (AES-256-GCM). Ключ шифрування лежить
+// ОКРЕМО від бази даних (файл .checkbox.key поруч із server.js з правами 600, або змінна середовища
+// CHECKBOX_SECRET_KEY) — тож копія/витік самої бази даних не розкриває облікові дані. Назовні (в API
+// і в застосунок) вони не віддаються ніколи.
+const SECRET_KEYS = new Set(['login', 'password', 'access_key']);
+function loadSecretKey() {
+  if (process.env.CHECKBOX_SECRET_KEY) return crypto.createHash('sha256').update(process.env.CHECKBOX_SECRET_KEY).digest();
+  const keyPath = process.env.CHECKBOX_KEY_FILE || path.join(__dirname, '.checkbox.key');
+  try {
+    return Buffer.from(fs.readFileSync(keyPath, 'utf8').trim(), 'hex');
+  } catch (e) {
+    const key = crypto.randomBytes(32);
+    fs.writeFileSync(keyPath, key.toString('hex'), { mode: 0o600 });
+    return key;
+  }
+}
+const SECRET_KEY = loadSecretKey();
+function encryptSecret(plain) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', SECRET_KEY, iv);
+  const enc = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
+  return 'enc:v1:' + iv.toString('hex') + ':' + c.getAuthTag().toString('hex') + ':' + enc.toString('hex');
+}
+function decryptSecret(stored) {
+  if (!stored || !String(stored).startsWith('enc:v1:')) return stored || '';
+  const [, , ivh, tagh, ench] = String(stored).split(':');
+  try {
+    const d = crypto.createDecipheriv('aes-256-gcm', SECRET_KEY, Buffer.from(ivh, 'hex'));
+    d.setAuthTag(Buffer.from(tagh, 'hex'));
+    return Buffer.concat([d.update(Buffer.from(ench, 'hex')), d.final()]).toString('utf8');
+  } catch (e) { return ''; } // інший ключ / пошкоджено
+}
+function cbGet(k, def) {
+  const r = cbGetStmt.get(k);
+  if (!r) return def;
+  return SECRET_KEYS.has(k) ? decryptSecret(r.value) : r.value;
+}
+function cbSet(k, v) {
+  if (v === null || v === undefined) { cbDelStmt.run(k); return; }
+  cbSetStmt.run(k, SECRET_KEYS.has(k) && v !== '' ? encryptSecret(v) : String(v));
+}
+// Міграція: якщо раніше значення збереглись відкритим текстом — шифруємо їх на місці.
+SECRET_KEYS.forEach(k => {
+  const r = cbGetStmt.get(k);
+  if (r && r.value && !String(r.value).startsWith('enc:v1:')) cbSetStmt.run(k, encryptSecret(r.value));
+});
 
 function requireOwner(req, res, next) {
   const data = JSON.parse(getStateStmt.get().data);
@@ -278,7 +332,18 @@ function cbHeaders(extra) {
   if (cbToken) h['Authorization'] = 'Bearer ' + cbToken;
   return Object.assign(h, extra || {});
 }
+// ЖОРСТКО лише читання: у Checkbox дозволено тільки вхід (POST signin) і GET-запити за переліком нижче.
+// Жодна інша операція (створення чеків, зміни, видалення) звідси відправитись не може.
+const CB_READ_PATHS = ['/api/v1/receipts', '/api/v1/cash-registers', '/api/v1/goods'];
+function cbAssertReadOnly(pathAndQuery, opts) {
+  const method = String((opts && opts.method) || 'GET').toUpperCase();
+  const pathOnly = pathAndQuery.split('?')[0];
+  if (method === 'POST' && pathOnly === '/api/v1/cashier/signin') return;
+  if (method === 'GET' && CB_READ_PATHS.includes(pathOnly)) return;
+  throw new Error('Заборонено: інтеграція Checkbox працює лише на читання (' + method + ' ' + pathOnly + ')');
+}
 async function cbFetchJson(pathAndQuery, opts, retried) {
+  cbAssertReadOnly(pathAndQuery, opts);
   const res = await fetch(cbBase() + pathAndQuery, Object.assign({ headers: cbHeaders() }, opts || {}));
   if (res.status === 401 && !retried && !(opts && opts.noAuthRetry)) {
     await cbSignin();
@@ -410,7 +475,7 @@ app.get('/api/checkbox/status', requireAuth, (req, res) => {
 });
 app.get('/api/checkbox/config', requireAuth, requireOwner, (req, res) => {
   res.json({
-    login: cbGet('login', ''), hasPassword: !!cbGet('password', ''), accessKey: cbGet('access_key', ''),
+    hasLogin: !!cbGet('login', ''), loginMasked: (cbGet('login', '') || '').slice(0, 2) + '•••', hasPassword: !!cbGet('password', ''), hasAccessKey: !!cbGet('access_key', ''),
     baseUrl: cbGet('base_url', '') || 'https://api.checkbox.ua',
     enabled: !!(Number(cbGet('start_from_ms', '0')) || 0), startFrom: Number(cbGet('start_from_ms', '0')) || 0,
     lastError: cbGet('last_error', ''), lastSync: cbGet('last_sync_info', ''),
@@ -420,9 +485,9 @@ app.get('/api/checkbox/config', requireAuth, requireOwner, (req, res) => {
 });
 app.put('/api/checkbox/config', requireAuth, requireOwner, (req, res) => {
   const b = req.body || {};
-  if (typeof b.login === 'string') cbSet('login', b.login.trim());
+  if (typeof b.login === 'string' && b.login.trim()) cbSet('login', b.login.trim());
   if (typeof b.password === 'string' && b.password) cbSet('password', b.password);
-  if (typeof b.accessKey === 'string') cbSet('access_key', b.accessKey.trim());
+  if (typeof b.accessKey === 'string' && b.accessKey.trim()) cbSet('access_key', b.accessKey.trim());
   if (typeof b.baseUrl === 'string') {
     const u = b.baseUrl.trim();
     // Захист від SSRF: логін/пароль Checkbox відправляються лише на офіційні адреси Checkbox.

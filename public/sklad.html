@@ -412,7 +412,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.14';
+const APP_VERSION='2026-10-07.15';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2571,7 +2571,7 @@ function tabbar(){
   const LABELS = { dashboard:'Головна', purchase:'Закупівлі', stock:'Склад', settings:'Ще', productionList:'Готовка',
     prepDashboard:'Головна', productionStart:'Готовка', prepTransferLocations:'Поставки', myHistory:'Історія',
     scheduleCalendar:'Графік', cashierRequest:'Запит', history:'Історія' };
-  const canSell = isOwner() || isCashier;
+  const canSell = false; // замовлення з застосунку створювати не можна — продажі лише з чеків Checkbox
   const fabAt = canSell ? Math.floor(tabs.length/2) : -1;
   tabs.forEach(([key,icon],idx)=>{
     if(idx===fabAt){
@@ -2800,7 +2800,7 @@ function dashboardView(){
   // --- Швидкі дії ---
   wrap.appendChild(el(`<div class="sec-head"><div class="sec-title">Швидкі дії</div></div>`));
   const qa = el(`<div class="qa-row"></div>`);
-  [['plus','Замовлення',()=>startCreateOrder()],['purchase','Закупівлі',()=>{view='purchase';render();}],
+  [['receipt','Checkbox',()=>{ cbUi.cfg=null; view='checkbox'; render(); }],['purchase','Закупівлі',()=>{view='purchase';render();}],
    ['stock','Склад',()=>{view='stock';render();}],['dashboard','Аналітика',()=>{view='analytics';render();}]].forEach(([ic,label,fn])=>{
     const b = el(`<button class="qa"><span class="qa-c">${ICONS[ic]}</span><span>${label}</span></button>`);
     b.onclick = fn; qa.appendChild(b);
@@ -3019,10 +3019,11 @@ function locationTransferNeedsView(){
 
 // ==================== Флоу "Створити замовлення" ====================
 function startCreateOrder(){
-  if(state.checkbox && state.checkbox.enabled && state.checkbox.blockManual){
-    appAlert('Продажі беруться автоматично з чеків Checkbox — оформлюйте продаж на касі. (Ручне оформлення можна ввімкнути в Налаштування → Checkbox.)');
-    return;
-  }
+  // Ручне створення замовлень вимкнено назавжди: продажі надходять лише з фіскальних чеків Checkbox.
+  appAlert('Створення замовлень у застосунку вимкнено. Продажі беруться автоматично з чеків Checkbox — пробивайте їх на касі.');
+  return;
+}
+function _startCreateOrderDisabled(){
   if(state.products.length===0){
     appAlert(isOwner() ? 'У меню ще немає товарів. Спочатку додайте їх: Налаштування → Меню.' : 'У меню ще немає товарів. Зверніться до власника.');
     if(isOwner()){ view = 'settings'; render(); }
@@ -3965,9 +3966,6 @@ function stockView(){
       ratingCard.onclick = ()=>{ view='myRating'; render(); };
       wrap.appendChild(ratingCard);
 
-      const orderBtn = el(`<button class="w-full btn-solid py-3.5 mb-4">Створити замовлення</button>`);
-      orderBtn.onclick = ()=> startCreateOrder();
-      wrap.appendChild(orderBtn);
       // «+ Закупівля», «Графік змін» і «Запросити поставку» тепер живуть на власних вкладках
       // нижнього меню («Закупка», «Графік змін», «Запросити поставку»), а не тут кнопками.
     }
@@ -6467,13 +6465,11 @@ function checkboxView(){
 
   // --- 1. Підключення ---
   wrap.appendChild(el(`<div class="sec-title mb-2">1. Підключення</div>`));
-  wrap.appendChild(el(`<div class="sub text-xs mb-3">Логін і пароль касира (або керівника) Checkbox. Вони зберігаються лише на сервері й ніколи не передаються в застосунок. Акаунт має бачити чеки потрібних кас.</div>`));
+  wrap.appendChild(el(`<div class="sub text-xs mb-3">Логін і пароль касира (або керівника) Checkbox. Вони зберігаються на сервері в зашифрованому вигляді й ніколи не повертаються в застосунок. Інтеграція працює лише на читання: застосунок нічого не відправляє в Checkbox. Акаунт має бачити чеки потрібних кас.</div>`));
   const form = el(`<div class="card p-4 mb-3"></div>`);
-  const inLogin = el(`<input type="text" class="w-full mb-2" placeholder="Логін Checkbox" autocomplete="off">`);
-  inLogin.value = cfg.login || '';
+  const inLogin = el(`<input type="text" class="w-full mb-2" placeholder="${cfg.hasLogin?'Логін збережено ('+escapeHtml(cfg.loginMasked||'')+') — введіть, щоб змінити':'Логін Checkbox'}" autocomplete="off">`);
   const inPass = el(`<input type="password" class="w-full mb-2" placeholder="${cfg.hasPassword?'Пароль збережено (введіть, щоб змінити)':'Пароль Checkbox'}" autocomplete="new-password">`);
-  const inKey = el(`<input type="text" class="w-full mb-3" placeholder="Ключ доступу інтеграції (X-Access-Key) — якщо видали" autocomplete="off">`);
-  inKey.value = cfg.accessKey || '';
+  const inKey = el(`<input type="password" class="w-full mb-3" placeholder="${cfg.hasAccessKey?'Ключ збережено (введіть, щоб змінити)':'Ключ доступу інтеграції (X-Access-Key) — якщо видали'}" autocomplete="off">`);
   form.appendChild(inLogin); form.appendChild(inPass); form.appendChild(inKey);
   const row = el(`<div class="flex gap-2"></div>`);
   const saveBtn = el(`<button class="btn-line flex-1 py-2.5">Зберегти</button>`);
@@ -6571,7 +6567,7 @@ function checkboxView(){
   wrap.appendChild(el(`<div class="sec-title mb-2 mt-5">4. Синхронізація продажів</div>`));
   const sync = el(`<div class="card p-4 mb-3"></div>`);
   const enabled = !!cfg.enabled;
-  const swRow = el(`<div class="flex items-center justify-between gap-3 mb-3"><div><div class="font-semibold text-sm">Брати продажі з Checkbox</div><div class="sub text-xs">${enabled?('Увімкнено з '+new Date(cfg.startFrom).toLocaleString('uk-UA')+'. Старіші чеки не враховуються.'):'Увімкніть, коли зіставили каси й товари: застосунок почне враховувати лише НОВІ чеки.'}</div></div></div>`);
+  const swRow = el(`<div class="flex items-center justify-between gap-3 mb-3"><div><div class="font-semibold text-sm">Брати продажі з Checkbox</div><div class="sub text-xs">${enabled?('Увімкнено з '+new Date(cfg.startFrom).toLocaleString('uk-UA')+'. Старіші чеки не враховуються.'):'Увімкніть, коли зіставили каси й товари: застосунок почне враховувати лише НОВІ чеки. Це єдине джерело продажів — замовлення в застосунку створити неможливо.'}</div></div></div>`);
   const sw = el(`<button type="button" style="width:46px;height:26px;border-radius:999px;border:none;position:relative;flex-shrink:0;background:${enabled?'var(--accent)':'#c3cbdd'}"><span style="position:absolute;top:3px;left:${enabled?'23px':'3px'};width:20px;height:20px;border-radius:50%;background:#fff;transition:left .15s"></span></button>`);
   sw.onclick = async ()=>{
     const r = await api('/api/checkbox/enable', { method:'POST', body: JSON.stringify({ enabled: !enabled }) });
@@ -6581,10 +6577,6 @@ function checkboxView(){
     saveState(); await cbLoadCfg(); rerender();
   };
   swRow.appendChild(sw); sync.appendChild(swRow);
-  const mRow = el(`<div class="flex items-center justify-between gap-3 mb-3"><div><div class="font-semibold text-sm">Забороняти ручне оформлення замовлень</div><div class="sub text-xs">Щоб продаж не рахувався двічі (на касі й у застосунку).</div></div></div>`);
-  const sw2 = el(`<button type="button" style="width:46px;height:26px;border-radius:999px;border:none;position:relative;flex-shrink:0;background:${cb.blockManual?'var(--accent)':'#c3cbdd'}"><span style="position:absolute;top:3px;left:${cb.blockManual?'23px':'3px'};width:20px;height:20px;border-radius:50%;background:#fff;transition:left .15s"></span></button>`);
-  sw2.onclick = ()=>{ cb.blockManual = !cb.blockManual; saveState(); rerender(); };
-  mRow.appendChild(sw2); sync.appendChild(mRow);
   let info = '';
   try{ const li = cfg.lastSync ? JSON.parse(cfg.lastSync) : null; if(li) info += 'Остання синхронізація: '+new Date(li.at).toLocaleTimeString('uk-UA')+' · отримано '+li.fetched+', нових '+li.added+'\n'; }catch(e){}
   info += 'Чеків у черзі на застосування: '+cfg.pending+' · застосовано: '+(cb.stats.applied||0);
