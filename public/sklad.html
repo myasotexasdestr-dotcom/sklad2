@@ -338,7 +338,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION = '2026-10-07.4';
+const APP_VERSION = '2026-10-07.5';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -1756,6 +1756,30 @@ function appConfirm(message, onConfirm){
     card.appendChild(row);
   });
 }
+// Плашка зверху екрана, що сама зникає (не блокує роботу, на відміну від appAlert).
+let toastTimer = null;
+function showToast(message, kind){
+  try{
+    let t = document.getElementById('appToast');
+    if(!t){
+      t = document.createElement('div');
+      t.id = 'appToast';
+      t.setAttribute('role','status');
+      t.style.cssText = 'position:fixed;left:50%;top:calc(12px + env(safe-area-inset-top,0px));transform:translate(-50%,-140%);z-index:9999;max-width:min(92vw,420px);width:max-content;padding:12px 18px;border-radius:16px;font-weight:600;font-size:.92rem;box-shadow:0 12px 32px rgba(0,0,0,.45);transition:transform .25s ease,opacity .25s ease;opacity:0;pointer-events:none;display:flex;align-items:center;gap:10px;color:#fff';
+      document.body.appendChild(t);
+    }
+    const ok = kind!=='error';
+    t.style.background = ok ? '#1f9d63' : '#d64545';
+    t.innerHTML = '<span style="font-size:1.1rem;line-height:1">'+(ok?'✓':'!')+'</span><span></span>';
+    t.lastChild.textContent = message;
+    // перезапуск анімації
+    t.style.transform = 'translate(-50%,-140%)'; t.style.opacity = '0';
+    void t.offsetWidth;
+    t.style.transform = 'translate(-50%,0)'; t.style.opacity = '1';
+    if(toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(()=>{ t.style.transform = 'translate(-50%,-140%)'; t.style.opacity = '0'; }, 2600);
+  }catch(e){}
+}
 function appAlert(message, onClose){
   try{
     if(window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.showAlert==='function'){
@@ -3054,7 +3078,7 @@ function finalizeOrder(warehouseId, total){
   state.sales.push({ id: uid(), locationId: orderDraft.locationId, category: orderDraft.category, amount: total, ts: nowStr(), tsMs: Date.now(), dateKey: dateKeyFromOffset(0), who: u?u.name:'-' });
   applySaleConsumption(orderDraft.cart, warehouseId);
   saveState();
-  appAlert('Замовлення оформлено: '+fmtMoney(total));
+  showToast('Замовлення оформлено: '+fmtMoney(total), 'success');
   orderDraft = null;
   view = homeView();
   render();
