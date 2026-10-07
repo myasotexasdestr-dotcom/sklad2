@@ -338,7 +338,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION = '2026-10-07.2';
+const APP_VERSION = '2026-10-07.3';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -1433,6 +1433,20 @@ function dateKeyInRange(dateKey, days){
   for(let off=0; off<days; off++){ if(dateKeyFromOffset(off)===dateKey) return true; }
   return false;
 }
+// Чистий прибуток локації = сума продажів − собівартість проданого (за знімками собівартості в замовленнях,
+// тож зміни цін потім не псують історію). filter(order) → true для замовлень, що враховуємо.
+function locationProfit(locationId, filter){
+  let revenue = 0, cost = 0;
+  (state.orders||[]).forEach(order=>{
+    if(order.locationId!==locationId) return;
+    if(filter && !filter(order)) return;
+    (order.items||[]).forEach(line=>{
+      revenue += (Number(line.price)||0) * (Number(line.qty)||0);
+      cost += lineUnitCost(line) * (Number(line.qty)||0);
+    });
+  });
+  return { revenue, cost, profit: revenue - cost, marginPct: revenue>0 ? (revenue-cost)/revenue*100 : 0 };
+}
 // Aggregates every sold dish/product across all orders within the last `days` days into per-item
 // revenue/cost/margin. Returns rows sorted by revenue desc.
 function dishPnlReport(days){
@@ -2472,6 +2486,32 @@ function analyticsView(){
   });
   wrap.appendChild(periodRow);
 
+  // --- Чистий прибуток по локаціях ---
+  wrap.appendChild(el(`<div class="font-bold mb-2" style="font-size:.95rem">Чистий прибуток по локаціях</div>`));
+  wrap.appendChild(el(`<div class="sub text-xs mb-2">Продажі мінус собівартість проданого</div>`));
+  {
+    let totR = 0, totC = 0;
+    state.locations.forEach(loc=>{
+      const lp = locationProfit(loc.id, o=>dateKeyInRange(o.dateKey, analyticsPeriod));
+      totR += lp.revenue; totC += lp.cost;
+      wrap.appendChild(el(`
+        <div class="card p-3 mb-2 flex items-center justify-between gap-3">
+          <div>
+            <div class="font-semibold">${escapeHtml(loc.name)}</div>
+            <div class="sub text-xs">продажі ${fmtMoney(lp.revenue)} · собівартість ${fmtMoney(lp.cost)}</div>
+          </div>
+          <div class="text-sm font-bold text-right" style="color:${lp.profit<0?'var(--danger)':'var(--accent2)'}">${lp.profit>=0?'+':''}${fmt(lp.profit)} ₴<div class="sub text-xs font-normal">${fmt(lp.marginPct)}%</div></div>
+        </div>
+      `));
+    });
+    if(state.locations.length>1){
+      const tp = totR - totC;
+      wrap.appendChild(el(`<div class="card p-3 mb-4 flex items-center justify-between"><div class="font-semibold">Разом</div><div class="font-bold" style="color:${tp<0?'var(--danger)':'var(--accent2)'}">${tp>=0?'+':''}${fmt(tp)} ₴</div></div>`));
+    } else {
+      wrap.appendChild(el(`<div class="mb-2"></div>`));
+    }
+  }
+
   // --- P&L по стравах ---
   wrap.appendChild(el(`<div class="font-bold mb-2" style="font-size:.95rem">P&L по стравах</div>`));
   const pnl = dishPnlReport(analyticsPeriod);
@@ -2602,6 +2642,7 @@ function dashboardView(){
     const day = dailyMetrics(loc.id, dateKey);
     const ff = day.metrics.turnoverByCategory.fastfood||0;
     const meat = day.metrics.turnoverByCategory.meat||0;
+    const lp = locationProfit(loc.id, o=>o.dateKey===dateKey);
     const card = el(`
       <div class="card p-4" style="min-width:180px;flex-shrink:0; scroll-snap-align:start; cursor:pointer">
         <div class="icon-badge mb-3" style="background:rgba(255,106,77,.15)">
@@ -2615,6 +2656,10 @@ function dashboardView(){
         <div class="flex items-center justify-between text-sm">
           <span class="sub">Фастфуд</span>
           <span class="font-bold">${fmtMoney(ff)}</span>
+        </div>
+        <div class="flex items-center justify-between text-sm mt-2 pt-2" style="border-top:1px solid #2a2b31">
+          <span class="sub">Чистий прибуток</span>
+          <span class="font-bold" style="color:${lp.profit<0?'var(--danger)':'var(--accent2)'}">${fmtMoney(lp.profit)}</span>
         </div>
       </div>
     `);
