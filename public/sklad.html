@@ -236,6 +236,8 @@ function applySyncedData(data){
   LOCAL_ONLY_KEYS.forEach(k=> local[k]=state[k]);
   state = Object.assign({}, data, local);
   runMigrations();
+  // Ціни закупівлі могли змінитись після створення страв — перераховуємо й, якщо щось змінилось, зберігаємо.
+  try{ if(recalcMenuCosts() && authToken) saveState(); }catch(e){}
 }
 async function fetchStateFromServer(){
   const r = await api('/api/state');
@@ -309,6 +311,7 @@ async function flushStateToServer(){
 // пише локальну сесію (хто залогінений на цьому пристрої) і ставить у чергу фонове збереження спільних
 // даних на сервер (з невеликим дебаунсом, щоб не бомбити мережу при швидких послідовних діях).
 function saveState(){
+  try{ recalcMenuCosts(); }catch(e){}
   saveLocalSession();
   if(!authToken) return;
   if(saveDebounceTimer) clearTimeout(saveDebounceTimer);
@@ -335,7 +338,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION = '2026-10-05.9';
+const APP_VERSION = '2026-10-07.1';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -469,6 +472,53 @@ function ingredientCostPerUnit(ing){
   const total = (ing.components||[]).reduce((s,c)=>s + c.amount * productCostByName(c.productName), 0);
   const yieldAmt = Number(ing.yieldAmount)||1;
   return yieldAmt>0 ? total/yieldAmt : 0;
+}
+
+// ---- Автоперерахунок собівартості меню ----
+// Собівартість страви зберігається в самій страві (ingredients[].cost + costPrice), тому якщо закупівельну
+// ціну продукту вказали/змінили вже після створення страви — вона лишалась старою. recalcMenuCosts() заново
+// рахує все з поточних цін; викликається при кожному збереженні і при підвантаженні даних з сервера.
+// Ціну продукту беремо детерміновано (перший рядок складу з ціною > 0), щоб різні пристрої з різним
+// «поточним складом» рахували однаково і не перезаписували одне одного. Історичні продажі й
+// recipeHistory не чіпаємо — вони тримають власні знімки.
+function stableProductCost(name){
+  const key = String(name||'').trim().toLowerCase();
+  const row = (state.stockItems||[]).find(i=>String(i.name||'').trim().toLowerCase()===key && (Number(i.costPerUnit)||0)>0);
+  return row ? Number(row.costPerUnit) : 0;
+}
+function stableIngredientUnitCost(ing){
+  const total = (ing.components||[]).reduce((s,c)=>s + (Number(c.amount)||0) * stableProductCost(c.productName), 0);
+  const y = Number(ing.yieldAmount)||1;
+  return y>0 ? total/y : 0;
+}
+function recalcMenuCosts(){
+  let changed = false;
+  const r4 = x=>Number((Number(x)||0).toFixed(4));
+  const set = (obj, key, val)=>{ val = r4(val); if(Math.abs((Number(obj[key])||0)-val) > 0.00005){ obj[key] = val; changed = true; } };
+  (state.products||[]).forEach(p=>{
+    if(p.type!=='dish') return;
+    let sum = 0;
+    (p.ingredients||[]).forEach(line=>{
+      const ing = (state.recipeIngredients||[]).find(i=>i.id===line.ingredientId);
+      if(ing){
+        const unitCost = stableIngredientUnitCost(ing);
+        set(line, 'costPerUnit', unitCost);
+        set(line, 'cost', (Number(line.amount)||0) * unitCost);
+      }
+      sum += Number(line.cost)||0;
+    });
+    set(p, 'costPrice', sum);
+  });
+  // Комбо: орієнтовна собівартість = сума середніх по слотах (після страв, бо залежить від них).
+  (state.products||[]).forEach(p=>{
+    if(p.type!=='combo') return;
+    const total = (p.comboSlots||[]).reduce((sum, sl)=>{
+      const costs = (sl.productIds||[]).map(id=>{ const x = state.products.find(q=>q.id===id); return x ? (Number(x.costPrice)||0) : 0; });
+      return sum + (costs.length ? costs.reduce((a,b)=>a+b,0)/costs.length : 0);
+    }, 0);
+    set(p, 'costPrice', total);
+  });
+  return changed;
 }
 
 // ---- On-hand ingredient stock per warehouse (see state.ingredientStock above) ----
