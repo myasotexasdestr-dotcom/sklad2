@@ -158,6 +158,8 @@ let saveInFlight = false;
 let saveQueuedAgain = false;
 let pollTimer = null;
 let lastSyncedJSON = null;
+let historyRefOverride = null; // id замовлення (чека Checkbox), до якого належить списання
+let historyCapture = null;     // масив, у який збираємо рядки списання цього чека
 let historyWhoOverride = null; // для проданих через Checkbox позицій — автор «Checkbox», а не той, на чиєму пристрої застосовано
 
 function loadLocalSession(){
@@ -413,7 +415,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.16';
+const APP_VERSION='2026-10-07.17';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -632,8 +634,10 @@ function recordIngredientChange(ing, warehouseId, delta, reason){
   const u = curUser();
   state.history.unshift({
     id: uid(), ingredientId: ing.id, name: ing.name, unit: ing.unit,
-    delta, reason, ts: nowStr(), tsMs: Date.now(), warehouseId, who: historyWhoOverride || (u ? u.name : '-')
+    delta, reason, ts: nowStr(), tsMs: Date.now(), warehouseId, who: historyWhoOverride || (u ? u.name : '-'),
+    orderRef: historyRefOverride || undefined
   });
+  if(historyCapture) historyCapture.push({ name: ing.name, unit: ing.unit, delta });
   if(state.history.length>300) state.history.pop();
 }
 
@@ -832,8 +836,10 @@ function recordStockChange(item, delta, reason){
     // currently open in "Залишки".
     id: uid(), stockItemId: item.id, name: item.name, unit: item.unit,
     delta, reason, ts: nowStr(), tsMs: Date.now(), warehouseId: item.warehouseId,
-    who: historyWhoOverride || (u ? u.name : '-')
+    who: historyWhoOverride || (u ? u.name : '-'),
+    orderRef: historyRefOverride || undefined
   });
+  if(historyCapture) historyCapture.push({ name: item.name, unit: item.unit, delta });
   if(state.history.length>300) state.history.pop();
 }
 function updateStockItem(id, data){
@@ -6077,7 +6083,42 @@ function historyView(){
     wrap.appendChild(el(`<div class="sub text-center py-10">Пока нет операций</div>`));
     return wrap;
   }
+  // Списання, що належать одному чеку Checkbox, показуємо однією карткою «Чек …» — вона розгортається
+  // в перелік списаних продуктів. Решта операцій — як і раніше окремими рядками.
+  const groups = new Map(); // orderRef -> { rows:[], host }
   items.forEach(h=>{
+    if(h.orderRef){
+      let g = groups.get(h.orderRef);
+      if(!g){
+        const ord = (state.orders||[]).find(o=>o.checkboxId===h.orderRef);
+        const card = el(`
+          <div class="card p-3 mb-2" style="cursor:pointer">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="font-medium">${ord&&ord.isReturn?'↩ Повернення':'🧾 Чек'}${ord&&ord.cashierName?' · '+escapeHtml(ord.cashierName):''}</div>
+                <div class="sub text-xs">Списання за продажем · ${escapeHtml(h.ts)}</div>
+              </div>
+              <div style="text-align:right"><div class="font-bold">${ord?fmtMoney(ord.total):''}</div><div class="sub text-xs rc-n"></div></div>
+            </div>
+            <div class="rc-rows" style="display:none;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)"></div>
+          </div>
+        `);
+        const rowsBox = card.querySelector('.rc-rows');
+        card.addEventListener('click', ()=>{ rowsBox.style.display = rowsBox.style.display==='none' ? 'block' : 'none'; });
+        g = { rows:[], card, rowsBox, n: card.querySelector('.rc-n') };
+        groups.set(h.orderRef, g);
+        wrap.appendChild(card);
+      }
+      g.rows.push(h);
+      g.rowsBox.appendChild(el(`
+        <div class="flex items-center justify-between text-sm" style="padding:3px 0">
+          <span>${escapeHtml(h.name)}</span>
+          <span class="font-semibold" style="color:${h.delta>0?'var(--ok)':'var(--danger)'}">${h.delta>0?'+':''}${fmt(h.delta)} ${escapeHtml(h.unit)}</span>
+        </div>
+      `));
+      g.n.textContent = g.rows.length + ' поз. списано';
+      return;
+    }
     const positive = h.delta>0;
     const row = el(`
       <div class="card p-3 mb-2 flex items-center justify-between">
@@ -6408,11 +6449,17 @@ function applyCheckboxReceipt(r){
       const items = groups[cat];
       const total = Number(items.reduce((s,l)=>s+l.price*l.qty,0).toFixed(2));
       const oid = catKeys.length>1 ? r.id+':'+cat : r.id;
-      state.orders.push({ id: uid(), checkboxId: oid, locationId, category: cat, items, comment: 'Checkbox'+(r.fiscalCode?' · '+r.fiscalCode:'')+(r.isReturn?' · ПОВЕРНЕННЯ':''),
-        total, ts, tsMs: r.ms||Date.now(), dateKey, who:'Checkbox', cashierName: r.cashier||'', isReturn: !!r.isReturn });
+      const ord = { id: uid(), checkboxId: oid, locationId, category: cat, items, comment: 'Checkbox'+(r.fiscalCode?' · '+r.fiscalCode:'')+(r.isReturn?' · ПОВЕРНЕННЯ':''),
+        total, ts, tsMs: r.ms||Date.now(), dateKey, who:'Checkbox', cashierName: r.cashier||'', isReturn: !!r.isReturn, consumption: [] };
+      state.orders.push(ord);
       state.sales.push({ id: uid(), locationId, category: cat, amount: total, ts, tsMs: r.ms||Date.now(), dateKey, who:'Checkbox', checkboxId: oid });
       const consCart = items.filter(l=>!l.unmapped);
-      if(consCart.length) applySaleConsumption(consCart, warehouseForLocation(locationId));
+      if(consCart.length){
+        // Списання прив'язуємо до цього чека: і в історії складу (orderRef), і в самому замовленні (consumption).
+        historyRefOverride = oid; historyCapture = [];
+        try{ applySaleConsumption(consCart, warehouseForLocation(locationId)); }
+        finally{ ord.consumption = historyCapture; historyRefOverride = null; historyCapture = null; }
+      }
     });
   } finally { historyWhoOverride = null; }
   cb.stats.applied++;
@@ -6671,6 +6718,15 @@ function receiptsView(){
         </div>
       `));
     });
+    const cons = o.consumption || [];
+    if(cons.length){
+      box.appendChild(el(`<div class="font-semibold text-xs" style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)">Списано зі складу</div>`));
+      cons.forEach(c=>{
+        box.appendChild(el(`<div class="flex items-center justify-between text-xs" style="padding:2px 0"><span>${escapeHtml(c.name)}</span><span class="font-semibold" style="color:${c.delta<0?'var(--danger)':'var(--ok)'}">${c.delta>0?'+':''}${fmt(c.delta)} ${escapeHtml(c.unit||'')}</span></div>`));
+      });
+    } else if(o.checkboxId){
+      box.appendChild(el(`<div class="sub text-xs" style="margin-top:8px">Списання зі складу немає (позиції не зв'язані з меню).</div>`));
+    }
     if(o.comment) box.appendChild(el(`<div class="sub text-xs" style="margin-top:6px">${escapeHtml(o.comment)}</div>`));
     card.addEventListener('click', ()=>{ box.style.display = box.style.display==='none' ? 'block' : 'none'; });
     wrap.appendChild(card);
