@@ -338,7 +338,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION = '2026-10-07.1';
+const APP_VERSION = '2026-10-07.2';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -521,6 +521,11 @@ function recalcMenuCosts(){
   return changed;
 }
 
+// ---- Списання в мінус ----
+// За замовчуванням ввімкнено (можна змінити в Налаштуваннях): залишок може йти нижче нуля, коли продали/приготували
+// більше, ніж є на обліку (напр. закупівлю ще не внесли). Вимкнено — стара поведінка (не нижче нуля, з попередженням).
+function allowNegativeStock(){ return state.allowNegativeStock !== false; }
+
 // ---- On-hand ingredient stock per warehouse (see state.ingredientStock above) ----
 function ingredientQtyAt(ingredientId, warehouseId){
   const rec = state.ingredientStock.find(r=>r.ingredientId===ingredientId && r.warehouseId===warehouseId);
@@ -546,7 +551,7 @@ function recordIngredientChange(ing, warehouseId, delta, reason){
     rec = { id: uid(), warehouseId, ingredientId: ing.id, qty: 0 };
     state.ingredientStock.push(rec);
   }
-  rec.qty = Math.max(0, Number((rec.qty + delta).toFixed(3)));
+  { const next = Number((rec.qty + delta).toFixed(3)); rec.qty = allowNegativeStock() ? next : Math.max(0, next); }
   const u = curUser();
   state.history.unshift({
     id: uid(), ingredientId: ing.id, name: ing.name, unit: ing.unit,
@@ -574,7 +579,7 @@ function recordPreparation(ing, outQty, used, warehouseId){
     const have = row ? row.qty : 0;
     if(have+1e-9 < u.amount) short.push(u.productName+': є '+fmt(have)+' '+u.unit+', потрібно '+fmt(u.amount));
   });
-  if(short.length) return {ok:false, error:'Не вистачає на складі:\n'+short.join('\n')};
+  if(short.length && !allowNegativeStock()) return {ok:false, error:'Не вистачає на складі:\n'+short.join('\n')};
   const reason = 'Заготовка: '+ing.name;
   const costTotal = lines.reduce((s,u)=>{
     const row = stockRowByName(u.productName, warehouseId);
@@ -742,7 +747,7 @@ function deleteStockItem(id){
 // Mutates item.qty and logs a history entry, WITHOUT saving/rendering (caller does that once, so bulk
 // corrections like an inventory don't re-render per line).
 function recordStockChange(item, delta, reason){
-  item.qty = Math.max(0, Number((item.qty + delta).toFixed(3)));
+  { const next = Number((item.qty + delta).toFixed(3)); item.qty = allowNegativeStock() ? next : Math.max(0, next); }
   const u = curUser();
   state.history.unshift({
     // item.warehouseId (not state.currentWarehouse) — this item always belongs to its own склад,
@@ -2987,7 +2992,7 @@ function submitOrder(){
     const available = item ? item.qty : 0;
     if(need.amount>available) shortfalls.push(name+': потрібно '+fmt(need.amount)+', є '+fmt(available));
   });
-  if(shortfalls.length>0){
+  if(shortfalls.length>0 && !allowNegativeStock()){
     appConfirm('Не вистачає на складі: '+shortfalls.join('; ')+'. Все одно оформити замовлення?', ()=> finalizeOrder(whId, total));
     return;
   }
@@ -3569,7 +3574,7 @@ function ingredientPrepareView(){
       const amt = parse(r.input.value);
       const lack = amt > r.have + 1e-9;
       r.haveEl.style.color = lack ? 'var(--danger)' : '';
-      r.haveEl.textContent = 'На складі: '+fmt(r.have)+' '+r.c.unit+(lack?' — не вистачає':'');
+      r.haveEl.textContent = 'На складі: '+fmt(r.have)+' '+r.c.unit+(lack?(allowNegativeStock()?' — піде в мінус':' — не вистачає'):'');
     });
     if(canSeeCost()){
       const total = rows.reduce((s,r)=>{ const row=stockRowByName(r.c.productName, whId); return s + parse(r.input.value)*(row?(row.costPerUnit||0):0); }, 0);
@@ -4988,7 +4993,7 @@ function transferStartView(){
     })).filter(l=>l.qty>0);
     if(lines.length===0){ err.textContent = 'Вкажіть кількість хоча б для одного інгредієнта'; return; }
     const over = lines.find(l=>l.qty>l.available);
-    if(over){ err.textContent = 'Недостатньо «'+over.ing.name+'» на складі-відправнику (є '+fmt(over.available)+' '+over.ing.unit+')'; return; }
+    if(over && !allowNegativeStock()){ err.textContent = 'Недостатньо «'+over.ing.name+'» на складі-відправнику (є '+fmt(over.available)+' '+over.ing.unit+')'; return; }
 
     const fromName = (state.warehouses.find(w=>w.id===fromWhId)||{}).name || '';
     const toName = (state.warehouses.find(w=>w.id===toWhId)||{}).name || '';
@@ -5314,7 +5319,7 @@ function productionStartView(){
   addItemBtn.onclick = ()=>{
     const taken = parseFloat((takenInput.value||'').replace(',','.')) || 0;
     if(taken<=0){ formErr.textContent = 'Вкажіть скільки взято'; return; }
-    if(taken>selectedInput.qty){ formErr.textContent = 'Недостатньо «'+selectedInput.name+'» на складі (доступно '+fmt(selectedInput.qty)+' '+selectedInput.unit+')'; return; }
+    if(taken>selectedInput.qty && !allowNegativeStock()){ formErr.textContent = 'Недостатньо «'+selectedInput.name+'» на складі (доступно '+fmt(selectedInput.qty)+' '+selectedInput.unit+')'; return; }
     const loss = hasLoss ? (parseFloat((lossInput.value||'').replace(',','.')) || 0) : 0;
     if(loss<0 || loss>taken){ formErr.textContent = 'Втрати не можуть перевищувати взяту кількість'; return; }
     const net = taken - loss;
@@ -6082,6 +6087,16 @@ function settingsView(){
     navGrid.appendChild(row);
   });
   wrap.appendChild(navGrid);
+
+  // --- Склад: списання в мінус ---
+  {
+    const negCard = el(`<div class="card p-3 mb-6 flex items-center justify-between gap-3"><div><div class="font-semibold text-sm">Списання в мінус</div><div class="sub text-xs">Дозволити продаж, заготовку й готовку, навіть якщо на складі менше, ніж потрібно — залишок піде нижче нуля.</div></div></div>`);
+    const on0 = allowNegativeStock();
+    const sw = el(`<button type="button" style="width:46px;height:26px;border-radius:999px;border:none;position:relative;flex-shrink:0;background:${on0?'var(--accent)':'var(--card3)'}"><span style="position:absolute;top:3px;left:${on0?'23px':'3px'};width:20px;height:20px;border-radius:999px;background:#fff;transition:left .15s"></span></button>`);
+    sw.onclick = ()=>{ state.allowNegativeStock = !allowNegativeStock(); logEvent('settings', 'Списання в мінус: '+(state.allowNegativeStock?'увімкнено':'вимкнено')); saveState(); render(); };
+    negCard.appendChild(sw);
+    wrap.appendChild(negCard);
+  }
 
   // --- Локації ---
   wrap.appendChild(el(`<div class="font-semibold mb-3">Локації</div>`));
@@ -6894,13 +6909,15 @@ function productAddView(){
       const addBox = el(`<div class="mt-2 pt-2" style="border-top:1px solid #2a2b31"></div>`);
       const kindHost = el(`<div></div>`);
       const refHost = el(`<div class="mb-2"></div>`);
-      const nameIn = el(`<input type="text" placeholder="Назва варіанта (необов'язково — візьметься зі списку)" class="w-full py-2.5 px-3 mb-2" style="border-radius:10px;background:var(--card2);color:var(--text);border:none">`);
-      const row2 = el(`<div class="flex gap-2 mb-2"><input data-amt type="text" inputmode="decimal" placeholder="Скільки списати" class="flex-1 py-2.5 px-3" style="border-radius:10px;background:var(--card2);color:var(--text);border:none"><input data-dl type="text" inputmode="decimal" placeholder="Доплата, ₴" class="flex-1 py-2.5 px-3" style="border-radius:10px;background:var(--card2);color:var(--text);border:none"></div>`);
+      const inpStyle = 'width:100%;min-width:0;box-sizing:border-box;border-radius:10px;background:var(--card2);color:var(--text);border:none;padding:10px 12px;font-size:.9rem';
+      const nameWrap = el(`<div class="mb-2"><div class="sub text-xs mb-1">Назва варіанта (необов'язково)</div><input type="text" placeholder="Як у списку, якщо порожньо" style="${inpStyle}"></div>`);
+      const nameIn = nameWrap.querySelector('input');
+      const row2 = el(`<div class="mb-2" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div data-amtbox><div class="sub text-xs mb-1">Скільки списати</div><input data-amt type="text" inputmode="decimal" placeholder="0" style="${inpStyle}"></div><div><div class="sub text-xs mb-1">Доплата, ₴</div><input data-dl type="text" inputmode="decimal" placeholder="0" style="${inpStyle}"></div></div>`);
       const addO = el(`<button class="btn-line w-full py-2">+ Додати варіант</button>`);
       let refSel = null;
       const buildRef = ()=>{
         refHost.innerHTML = '';
-        row2.querySelector('[data-amt]').style.display = kind==='none' ? 'none' : '';
+        row2.querySelector('[data-amtbox]').style.visibility = kind==='none' ? 'hidden' : 'visible';
         if(kind==='none'){ refSel = null; return; }
         const opts = kind==='ingredient'
           ? availableRecipes().map(r=>({value:r.id, label:r.name+' ('+r.unit+')'}))
@@ -6930,7 +6947,7 @@ function productAddView(){
         g.options.push(opt);
         renderGroups();
       };
-      addBox.appendChild(kindHost); addBox.appendChild(refHost); addBox.appendChild(nameIn); addBox.appendChild(row2); addBox.appendChild(addO);
+      addBox.appendChild(kindHost); addBox.appendChild(refHost); addBox.appendChild(nameWrap); addBox.appendChild(row2); addBox.appendChild(addO);
       card.appendChild(addBox);
       groupsHost.appendChild(card);
     });
