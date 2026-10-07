@@ -412,7 +412,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.12';
+const APP_VERSION='2026-10-07.13';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -1916,6 +1916,7 @@ function customSelect(options, initialValue, onChange){
   let opts = options;
   let current = initialValue!==undefined && initialValue!==null ? initialValue : (opts[0] ? opts[0].value : null);
   let openState = false;
+  let host = null, hostPrev = null;
 
   const btn = el(`
     <button type="button" class="w-full flex items-center justify-between" style="border-radius:12px;background:var(--card2);color:var(--text);border:none;padding:12px 14px;text-align:left;font-size:.9rem;font-weight:600">
@@ -1958,11 +1959,16 @@ function customSelect(options, initialValue, onChange){
   }
   function openPanel(){
     openState = true;
+    // Картки з backdrop-filter створюють власний шар: наступна картка перекривала б випадаючий список.
+    // Піднімаємо картку-власника списку над сусідніми, поки він відкритий.
+    host = wrap.closest('.card, .panel');
+    if(host){ hostPrev = { z: host.style.zIndex, pos: host.style.position }; host.style.zIndex = '40'; if(!host.style.position) host.style.position = 'relative'; }
     panel.style.display = 'block';
     chev.style.transform = 'rotate(180deg)';
   }
   function closePanel(){
     openState = false;
+    if(host){ host.style.zIndex = hostPrev.z; host.style.position = hostPrev.pos; host = null; }
     panel.style.display = 'none';
     chev.style.transform = 'rotate(0deg)';
   }
