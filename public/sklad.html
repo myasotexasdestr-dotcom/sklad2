@@ -344,7 +344,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION = '2026-10-07.6';
+const APP_VERSION='2026-10-07.7';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -3078,7 +3078,7 @@ function finalizeOrder(warehouseId, total){
   const order = {
     id: uid(), locationId: orderDraft.locationId, category: orderDraft.category,
     items: orderDraft.cart.map(l=>({...l})), comment: orderDraft.comment||'',
-    total, ts: nowStr(), dateKey: dateKeyFromOffset(0), who: u?u.name:'-'
+    total, ts: nowStr(), tsMs: Date.now(), dateKey: dateKeyFromOffset(0), who: u?u.name:'-'
   };
   state.orders.push(order);
   state.sales.push({ id: uid(), locationId: orderDraft.locationId, category: orderDraft.category, amount: total, ts: nowStr(), tsMs: Date.now(), dateKey: dateKeyFromOffset(0), who: u?u.name:'-' });
@@ -5941,26 +5941,90 @@ function historyView(){
 // «Історія моїх дій» об'єднує ДВА джерела: рух товару/інгредієнтів (state.history — з кількістю),
 // і ширший журнал подій (state.auditLog — задачі, запити поставок тощо, без кількості), відфільтровані
 // по цьому користувачу й відсортовані за часом (tsMs; старі записи без нього просто йдуть в кінець).
+function actionLabelForReason(reason){
+  const r = String(reason||'');
+  if(r.startsWith('Списання')) return { label:'Списання', icon:'🗑', detail: r.replace(/^Списання:?\s*/,'') };
+  if(r.startsWith('Заготовка')) return { label:'Заготовка', icon:'🥣', detail: r.replace(/^Заготовка:?\s*/,'') };
+  if(r.startsWith('Закупівля')) return { label:'Закупівля', icon:'🛒', detail:'' };
+  if(r.startsWith('Поставка')) return { label:'Поставка', icon:'🚚', detail: r.replace(/^Поставка\s*/,'').replace(/[()]/g,'') };
+  if(r.startsWith('Виробництво')) return { label:'Виробництво', icon:'🏭', detail: r.replace(/^Виробництво:?\s*/,'') };
+  if(r.startsWith('Інвентаризація')) return { label:'Інвентаризація', icon:'📋', detail:'' };
+  if(r.startsWith('Редагування')) return { label:'Редагування залишку', icon:'✏️', detail:'вручну' };
+  return { label: r||'Операція', icon:'•', detail:'' };
+}
+function orderLineDetails(l){
+  const parts = [];
+  if(l.productType==='combo' || (l.comboSelections && l.comboSelections.length)){
+    (l.comboSelections||[]).forEach(c=>{
+      parts.push(c.name+((c.selectedOptions&&c.selectedOptions.length)?' ('+c.selectedOptions.map(o=>o.name).join(', ')+')':''));
+    });
+    (l.selectedOptions||[]).forEach(o=> parts.push(o.name));
+  } else {
+    if(l.modifierName) parts.push(l.modifierName);
+    (l.selectedOptions||[]).forEach(o=> parts.push(o.name));
+  }
+  return parts.join(' · ');
+}
 function myHistoryView(){
   const wrap = el(`<div></div>`);
   wrap.appendChild(el(`<div class="font-bold mb-4" style="font-size:1.2rem">Історія моїх дій</div>`));
   const u = curUser();
-  const stockItems = state.history.filter(h=> u && h.who===u.name).map(h=> ({ kind:'stock', tsMs: h.tsMs||0, data: h }));
-  const eventItems = state.auditLog.filter(a=> u && a.who===u.name).map(a=> ({ kind:'event', tsMs: a.tsMs||0, data: a }));
-  const items = stockItems.concat(eventItems).sort((a,b)=> b.tsMs - a.tsMs);
+  // Продаж: один чек = одна картка (рядки «Продаж» у русі складу не дублюємо).
+  // Подія журналу «writeoff» теж не дублюється — списання показується з руху складу.
+  const orderItems = (state.orders||[]).filter(o=> u && o.who===u.name).map(o=>{
+    let t = o.tsMs;
+    if(!t){ const sl = (state.sales||[]).find(x=>x.ts===o.ts && x.who===o.who && x.tsMs); t = sl ? sl.tsMs : 0; }
+    return { kind:'order', tsMs: t||0, data:o };
+  });
+  const stockItems = state.history.filter(h=> u && h.who===u.name && h.reason!=='Продаж').map(h=> ({ kind:'stock', tsMs: h.tsMs||0, data: h }));
+  const eventItems = state.auditLog.filter(a=> u && a.who===u.name && a.type!=='writeoff').map(a=> ({ kind:'event', tsMs: a.tsMs||0, data: a }));
+  const items = orderItems.concat(stockItems, eventItems).sort((a,b)=> b.tsMs - a.tsMs);
   if(items.length===0){
     wrap.appendChild(el(`<div class="sub text-center py-10">Ще немає жодної дії</div>`));
     return wrap;
   }
   items.forEach(entry=>{
-    if(entry.kind==='stock'){
+    if(entry.kind==='order'){
+      const o = entry.data;
+      const cnt = (o.items||[]).reduce((s,l)=>s+(l.qty||0),0);
+      const loc = (state.locations.find(l=>l.id===o.locationId)||{}).name || '';
+      const card = el(`
+        <div class="card p-3 mb-2" data-order="${o.id}" style="cursor:pointer">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="font-medium">🧾 Продаж${loc?' · '+escapeHtml(loc):''}</div>
+              <div class="sub text-xs">${o.ts} · ${cnt} поз.</div>
+            </div>
+            <div class="font-bold" style="color:var(--ok)">+${fmtMoney(o.total)}</div>
+          </div>
+          <div class="order-lines" style="display:none;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)"></div>
+        </div>
+      `);
+      const box = card.querySelector('.order-lines');
+      (o.items||[]).forEach(l=>{
+        const det = orderLineDetails(l);
+        box.appendChild(el(`
+          <div class="flex items-start justify-between" style="padding:4px 0">
+            <div style="min-width:0">
+              <div class="text-sm">${escapeHtml(l.name)} × ${l.qty}</div>
+              ${det?`<div class="sub text-xs">${escapeHtml(det)}</div>`:''}
+            </div>
+            <div class="text-sm font-medium" style="white-space:nowrap;margin-left:8px">${fmtMoney(l.price*l.qty)}</div>
+          </div>
+        `));
+      });
+      if(o.comment) box.appendChild(el(`<div class="sub text-xs" style="margin-top:6px">Коментар: ${escapeHtml(o.comment)}</div>`));
+      card.addEventListener('click', ()=>{ box.style.display = box.style.display==='none' ? 'block' : 'none'; });
+      wrap.appendChild(card);
+    } else if(entry.kind==='stock'){
       const h = entry.data;
       const positive = h.delta>0;
+      const act = actionLabelForReason(h.reason);
       wrap.appendChild(el(`
         <div class="card p-3 mb-2 flex items-center justify-between">
           <div>
-            <div class="font-medium">${escapeHtml(h.name)}</div>
-            <div class="sub text-xs">${escapeHtml(h.reason)} · ${h.ts}</div>
+            <div class="font-medium">${act.icon} ${escapeHtml(act.label)}: ${escapeHtml(h.name)}</div>
+            <div class="sub text-xs">${act.detail?escapeHtml(act.detail)+' · ':''}${h.ts}</div>
           </div>
           <div class="font-bold" style="color:${positive?'var(--ok)':'var(--danger)'}">
             ${positive?'+':''}${fmt(h.delta)} ${escapeHtml(h.unit)}
