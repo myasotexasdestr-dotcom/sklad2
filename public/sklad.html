@@ -469,7 +469,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.27';
+const APP_VERSION='2026-10-08.28';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -3677,6 +3677,10 @@ function startPurchaseFlow(){
     appAlert('Закупівля доступна тільки на точці, де ви сьогодні на зміні. Вас не призначено в «Графіку змін» — зверніться до власника.');
     return;
   }
+  if(u && u.role==='cashier' && !warehouseForLocationOrNull(cashierShiftLocationId())){
+    appAlert('Для вашої точки не призначено склад, тому закупівлю зараз зробити не можна. Зверніться до власника: Склад → редагування складу → «Склад точки».');
+    return;
+  }
   view = 'purchaseCreate'; render();
 }
 function cashierShiftLocationId(){
@@ -3730,7 +3734,12 @@ function purchaseCreateView(){
 
   let whId;
   if(isCashier){
-    whId = warehouseForLocation(cashierShiftLocationId());
+    const shiftWh = cashierShiftLocationId() ? warehouseForLocationOrNull(cashierShiftLocationId()) : null;
+    whId = shiftWh ? shiftWh.id : null;
+    if(cashierShiftLocationId() && !shiftWh){
+      wrap.appendChild(el(`<div class="card p-4 mb-4 sub">Для вашої точки не призначено склад, тому закупівлю зараз зробити не можна. Зверніться до власника: Склад → редагування складу → «Склад точки».</div>`));
+      return wrap;
+    }
     if(!cashierShiftLocationId()){
       wrap.appendChild(el(`<div class="card p-4 mb-4 sub">Закупівля доступна тільки на точці, де ви сьогодні на зміні. Вас не призначено в «Графіку змін».</div>`));
       return wrap;
