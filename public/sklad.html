@@ -321,6 +321,7 @@ function applySyncedData(data){
   runMigrations();
   // Ціни закупівлі могли змінитись після створення страв — перераховуємо й, якщо щось змінилось, зберігаємо.
   try{ if(fixCheckboxConsumptionWarehouses() && authToken) saveState(); }catch(e){ console.error('consumption fix', e); }
+  try{ if(reprocessCheckboxToday() && authToken) saveState(); }catch(e){ console.error('checkbox reprocess', e); }
   try{ if(recalcMenuCosts() && authToken) saveState(); }catch(e){}
 }
 // Одноразово: списання за чеками Checkbox/Glovo, що сьогодні (08.10.2026) потрапили на «Базу» замість складу точки,
@@ -470,7 +471,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.30';
+const APP_VERSION='2026-10-08.31';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -6737,6 +6738,70 @@ let cbTickBusy = false;
 function cbReceiptApplied(id){
   return (state.orders||[]).some(o=> o.checkboxId===id || String(o.checkboxId||'').startsWith(id+':'));
 }
+// Перерахунок сьогоднішніх чеків Checkbox після зв'язування нових позицій з меню: рядки, що були «без зв'язку», стають
+// товарами меню (собівартість, категорія, списання зі складу точки), замовлення/продажі перебудовуються, статистика
+// продажів оновлюється. Ідемпотентно: чіпає лише чеки, де є рядок без зв'язку, який тепер зв'язаний. Повертає кількість чеків.
+function checkboxKeyOfLine(l){
+  if(l.checkboxKey) return l.checkboxKey;
+  const seen = (state.checkbox && state.checkbox.goodsSeen) || {};
+  const nm = String(l.checkboxName||l.name||'').trim().toLowerCase();
+  const hit = Object.keys(seen).find(k=> String(seen[k].name||'').trim().toLowerCase()===nm);
+  return hit || null;
+}
+function reprocessCheckboxToday(){
+  const cb = state.checkbox;
+  if(!cb || !cb.itemMap || !state.orders) return 0;
+  const today = localDateKey(new Date());
+  const groups = {};
+  state.orders.forEach(o=>{
+    if(!o.checkboxId || o.dateKey!==today) return;
+    const base = String(o.checkboxId).split(':')[0];
+    (groups[base] = groups[base] || []).push(o);
+  });
+  let fixed = 0;
+  Object.keys(groups).forEach(base=>{
+    const orders = groups[base];
+    const remap = (l)=>{
+      if(!l.unmapped) return null;
+      const key = checkboxKeyOfLine(l);
+      const pid = key ? cb.itemMap[key] : null;
+      const product = pid ? state.products.find(pp=>pp.id===pid) : null;
+      return product ? { key, product } : null;
+    };
+    if(!orders.some(o=>(o.items||[]).some(l=>remap(l)))) return;
+    const first = orders[0];
+    const lines = [];
+    orders.forEach(o=>(o.items||[]).forEach(l=>{
+      const m = remap(l);
+      if(m){
+        const nl = Object.assign({}, l, { name: m.product.name, checkboxKey: m.key, unmapped: false, optionKey:'', selectedOptions:[], optionsCostSnapshot:0, comboSelections:[] }, productLineFields(m.product));
+        delete nl.unmapped;
+        lines.push(nl);
+      } else lines.push(Object.assign({}, l));
+    }));
+    // 1) прибираємо старе списання цих замовлень (повернення на склад + видалення їхніх рядків історії)
+    const oids = orders.map(o=>o.checkboxId);
+    const wh = warehouseForLocation(first.locationId);
+    const back = [];
+    orders.forEach(o=>(o.items||[]).filter(l=>!l.unmapped).forEach(l=> back.push(Object.assign({}, l, { qty: -l.qty }))));
+    if(back.length){
+      historyRefOverride = '__rev'; historyCapture = [];
+      try{ applySaleConsumption(back, wh); } finally { historyRefOverride = null; historyCapture = null; }
+    }
+    state.history = state.history.filter(h=> h.orderRef!=='__rev' && !oids.includes(h.orderRef));
+    state.orders = state.orders.filter(o=>!oids.includes(o.checkboxId));
+    state.sales = state.sales.filter(x=>!oids.includes(x.checkboxId));
+    // 2) застосовуємо чек заново вже зі зв'язаними позиціями
+    recordSaleGroups({ lines, locationId: first.locationId, ms: first.tsMs, who: first.who||'Checkbox', baseId: base, idKey:'checkboxId',
+      comment: first.comment||'Checkbox', extra: { cashierName: first.cashierName||'', isReturn: !!first.isReturn } });
+    fixed++;
+  });
+  if(fixed){
+    if(cb.stats && cb.stats.unmappedLines) cb.stats.unmappedLines = Math.max(0, cb.stats.unmappedLines - fixed);
+    logEvent('checkbox', 'Перераховано сьогоднішні чеки після зв\'язування позицій: '+fixed);
+  }
+  return fixed;
+}
 // Перетворює чек Checkbox на замовлення(я) + продаж(і) + списання зі складу. Повертає true, якщо щось застосовано.
 // Поля рядка продажу, що залежать від товару меню (тип, рецепт-знімок, собівартість; для комбо — склад слотів).
 function productLineFields(product){
@@ -6805,7 +6870,7 @@ function applyCheckboxReceipt(r){
     cb.goodsSeen[g.key] = { name:g.name, code:g.code, price:g.price };
     const pid = cb.itemMap[g.key];
     const product = pid ? state.products.find(p=>p.id===pid) : null;
-    const base = { id: uid(), name: product ? product.name : g.name, checkboxName: g.name, price: g.price, qty: g.qty*sign,
+    const base = { id: uid(), name: product ? product.name : g.name, checkboxName: g.name, checkboxKey: g.key, price: g.price, qty: g.qty*sign,
       modifierId:null, modifierName:null, selectedOptions:[], optionsCostSnapshot:0, optionKey:'', comboSelections:[] };
     if(!product){ cb.stats.unmappedLines++; return Object.assign(base, { productId:null, productType:'unmapped', recipeSnapshot:[], costPriceSnapshot:0, unmapped:true, category:null }); }
     return Object.assign(base, productLineFields(product));
@@ -6932,6 +6997,13 @@ function checkboxView(){
   const goodsRow = el(`<div class="flex gap-2 mb-3"></div>`);
   const loadGoods = el(`<button class="btn-line flex-1 py-2.5">Завантажити товари з Checkbox</button>`);
   goodsRow.appendChild(loadGoods); wrap.appendChild(goodsRow);
+  const reBtn = el(`<button class="btn-line w-full py-2.5 mb-3">Перерахувати чеки за сьогодні</button>`);
+  reBtn.onclick = ()=>{
+    const n = reprocessCheckboxToday();
+    saveState(); render();
+    appAlert(n ? 'Перераховано чеків: '+n+'. Позиції зв\'язано з меню, списання зі складу й статистика продажів оновлені.' : 'Нічого перераховувати: у сьогоднішніх чеках немає позицій без зв\'язку, які тепер зв\'язані.');
+  };
+  wrap.appendChild(reBtn);
   const gm = el(`<div class="text-xs mb-3 sub"></div>`); gm.textContent = cbUi.goodsMsg; wrap.appendChild(gm);
   loadGoods.onclick = async ()=>{
     gm.textContent = 'Завантажуємо…';
@@ -6959,7 +7031,9 @@ function checkboxView(){
         const card = el(`<div class="card p-3 mb-2"><div class="font-semibold text-sm">${escapeHtml(g.name)}</div><div class="sub text-xs mb-2">${g.code?'код '+escapeHtml(g.code)+' · ':''}${g.price?fmtMoney(g.price):''}</div></div>`);
         card.appendChild(customSelect([{value:'', label:'— не списувати —'}].concat(products.map(p=>({value:p.id,label:p.name}))), cb.itemMap[k]||'', (v)=>{
           if(v) cb.itemMap[k] = v; else delete cb.itemMap[k];
+          const n = reprocessCheckboxToday();
           saveState();
+          if(n) showToast('Перераховано сьогоднішніх чеків: '+n, 'success');
         }));
         listHost.appendChild(card);
       });
