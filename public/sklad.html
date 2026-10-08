@@ -469,7 +469,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.28';
+const APP_VERSION='2026-10-08.29';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -3434,7 +3434,7 @@ function cashierSalaryForPeriod(staffId, periodKey){
   const todayKey = localDateKey(new Date());
   const days = dateKeysInRange(range.start, range.end).filter(dk=>dk<=todayKey);
 
-  let daysWorked=0, basePay=0, meatPortions=0, meatBonus=0, fastfoodTotal=0, fastfoodBonus=0;
+  let daysWorked=0, basePay=0, meatPortions=0, meatBonus=0, fastfoodTotal=0, fastfoodBonus=0, ffAvgSum=0, today=null;
   days.forEach(dateKey=>{
     const entry = scheduleEntryFor(staffId, dateKey);
     if(!entry) return;
@@ -3451,11 +3451,16 @@ function cashierSalaryForPeriod(staffId, periodKey){
 
     const dayFastfoodTotal = dayOrders.filter(o=>o.category==='fastfood').reduce((s,o)=>s+(Number(o.total)||0),0);
     fastfoodTotal += dayFastfoodTotal;
-    fastfoodBonus += fastfoodBonusFor(dayFastfoodTotal / people);
+    const dayAvg = dayFastfoodTotal / people;
+    ffAvgSum += dayAvg;
+    fastfoodBonus += fastfoodBonusFor(dayAvg);
+    if(dateKey===todayKey) today = { people, fastfoodTotal: dayFastfoodTotal, fastfoodAvg: dayAvg, fastfoodBonus: fastfoodBonusFor(dayAvg), meatPortions: dayMeatPortions, meatBonus: dayMeatPortions*15 };
   });
 
   return {
     periodKey, daysWorked, basePay, meatPortions, meatBonus, fastfoodTotal, fastfoodBonus,
+    fastfoodAvgPerShift: daysWorked ? ffAvgSum/daysWorked : 0,   // середня каса фастфуду на людину за відпрацьований день
+    bonusTotal: meatBonus + fastfoodBonus, today,
     total: basePay + meatBonus + fastfoodBonus
   };
 }
@@ -4119,11 +4124,30 @@ function stockView(){
       });
       wrap.appendChild(cqa);
       const salary = cashierSalaryForPeriod(u0.id, myPeriodKeyForSalary);
+      // Зарплата — лише база; бонуси окремо під нею (середня каса фастфуду на людину + порції м'яса).
       wrap.appendChild(el(`
-        <div class="card p-4 mb-4 text-center">
+        <div class="card p-4 mb-3 text-center">
           <div class="sub text-xs mb-1">Зарплата за період ${escapeHtml(periodLabel(myPeriodKeyForSalary))}</div>
-          <div class="font-bold" style="font-size:1.9rem;color:var(--accent2)">${fmtMoney(salary.total)}</div>
-          <div class="sub text-xs mt-1">База ${fmtMoney(salary.basePay)} (${salary.daysWorked} зм.) · М'ясо ${fmtMoney(salary.meatBonus)} (${salary.meatPortions} порц.) · Фастфуд ${fmtMoney(salary.fastfoodBonus)}</div>
+          <div class="font-bold" style="font-size:1.9rem;color:var(--accent2)">${fmtMoney(salary.basePay)}</div>
+          <div class="sub text-xs mt-1">${salary.daysWorked} зм.</div>
+        </div>
+      `));
+      const todayLine = (label, v)=> v ? `<div class="flex justify-between gap-3 text-xs sub mt-1"><span>${label}</span><span style="text-align:right">${v}</span></div>` : '';
+      wrap.appendChild(el(`
+        <div class="card p-4 mb-4">
+          <div class="flex items-center justify-between mb-2"><div class="font-semibold">Бонуси</div><div class="font-bold" style="color:var(--accent2)">${fmtMoney(salary.bonusTotal)}</div></div>
+          <div class="flex items-center justify-between py-2" style="border-top:1px solid var(--line)">
+            <div><div class="text-sm font-semibold">Фастфуд</div><div class="sub text-xs">Середня каса на людину за зміну: ${fmtMoney(salary.fastfoodAvgPerShift)}</div></div>
+            <div class="font-bold">${fmtMoney(salary.fastfoodBonus)}</div>
+          </div>
+          <div class="flex items-center justify-between py-2" style="border-top:1px solid var(--line)">
+            <div><div class="text-sm font-semibold">М'ясо</div><div class="sub text-xs">${fmt(salary.meatPortions)} порц. × 15 ₴</div></div>
+            <div class="font-bold">${fmtMoney(salary.meatBonus)}</div>
+          </div>
+          ${salary.today ? `<div style="border-top:1px solid var(--line);padding-top:8px;margin-top:2px"><div class="sub text-xs mb-0.5">Сьогодні (${salary.today.people} ${salary.today.people>1?'на зміні':'на зміні'})</div>
+            ${todayLine('Фастфуд на людину', fmtMoney(salary.today.fastfoodAvg)+' → '+fmtMoney(salary.today.fastfoodBonus))}
+            ${todayLine('Порції м\'яса', fmt(salary.today.meatPortions)+' × 15 = '+fmtMoney(salary.today.meatBonus))}</div>` : ''}
+          <div class="flex justify-between text-xs sub mt-3" style="border-top:1px solid var(--line);padding-top:8px"><span>Разом до виплати (зарплата + бонуси)</span><b style="color:var(--text)">${fmtMoney(salary.total)}</b></div>
         </div>
       `));
 
