@@ -473,7 +473,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.33';
+const APP_VERSION='2026-10-08.34';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -567,6 +567,10 @@ function productionRawProducts(){
   const u = curUser();
   if(u && u.role==='cook') return items.filter(i=>(i.category||'meat')==='meat');
   return items;
+}
+// Назви товарів меню типу «товар» — їх готовка може поповнювати напряму (залишок товару = готовий продукт).
+function menuProductNames(){
+  return Array.from(new Set((state.products||[]).filter(x=>x.type==='product').map(x=>x.name))).sort((a,b)=>a.localeCompare(b,'uk'));
 }
 function addProductionLink(rawName, outputName){
   if(state.productionLinks.some(l=>l.rawName===rawName && l.outputName===outputName)) return;
@@ -1151,14 +1155,16 @@ function finishProduction(productionId, weights){
   const whId = production.warehouseId;
   production.items.forEach(it=>{
     const outputWeight = Number(weights[it.id]) || 0;
+    const menuProd = state.products.find(x=>x.type==='product' && x.name.trim().toLowerCase()===it.outputName.trim().toLowerCase());
     let outItem = state.stockItems.find(p=>p.warehouseId===whId && p.name.trim().toLowerCase()===it.outputName.trim().toLowerCase());
     if(!outItem){
       const outCost = outputWeight>0 ? ((it.inputCostPerUnit||0) * it.inputWeight) / outputWeight : 0;
-      outItem = { id: uid(), warehouseId: whId, name: it.outputName, unit: it.inputUnit, qty: 0, min: 0, costPerUnit: outCost, category: it.category||'meat' };
+      outItem = { id: uid(), warehouseId: whId, name: menuProd ? menuProd.name : it.outputName, unit: it.inputUnit, qty: 0, min: 0, costPerUnit: outCost, category: menuProd ? (menuProd.category==='fastfood'?'fastfood':'meat') : (it.category||'meat') };
       state.stockItems.push(outItem);
     }
     if(outputWeight>0) recordStockChange(outItem, outputWeight, 'Виробництво: готовий продукт');
 
+    if(menuProd) it.outputProductId = menuProd.id;
     it.outputWeight = outputWeight;
     it.shrinkagePercent = it.netWeight>0 ? ((it.netWeight - outputWeight) / it.netWeight) * 100 : 0;
     it.processingLossPercent = it.inputWeight>0 ? (it.lossWeight / it.inputWeight) * 100 : 0;
@@ -1795,8 +1801,19 @@ function dismissNotification(id){
 // на кожен слот (бургер, картопля, напій) касир обирає одну з доданих позицій; списується те, що обрали.
 // optionGroups — групи вибору (соус, напій…): при продажу касир обирає по одній опції з кожної групи;
 // опція може списувати рецепт (соус) чи продукт зі складу (напій) і мати доплату.
+// Товар меню типу «товар» (напр. Кола, Шаурма-порція) веде залишки на складах: при збереженні створюємо його рядок
+// на обраних складах (з нульовим залишком), щоб продажі списувались, а готовка могла його поповнювати.
+function ensureProductStock(prod, warehouseIds, unit){
+  if(!prod || prod.type!=='product') return;
+  (warehouseIds||[]).forEach(wid=>{
+    if(!state.warehouses.some(w=>w.id===wid)) return;
+    if(stockRowByName(prod.name, wid)) return;
+    state.stockItems.push({ id: uid(), warehouseId: wid, name: prod.name, unit: unit||'шт', qty: 0, min: 0,
+      costPerUnit: Number(prod.costPrice)||0, category: prod.category==='fastfood' ? 'fastfood' : 'meat' });
+  });
+}
 function addProduct(data){
-  state.products.push({
+  const newProd = {
     id: uid(),
     name: data.name,
     category: data.category,
@@ -1808,9 +1825,12 @@ function addProduct(data){
     optionGroups: data.optionGroups || [],
     comboSlots: data.type==='combo' ? (data.comboSlots||[]) : [],
     recipeVersion: 1, recipeHistory: []
-  });
+  };
+  state.products.push(newProd);
+  if(data.type==='product') ensureProductStock(newProd, data.warehouseIds, data.unit);
   logEvent('menu', `Додано товар у меню: ${data.name} (${fmtMoney(Number(data.price)||0)})`);
   saveState(); render();
+  return newProd;
 }
 // Edits an existing menu item in place. When it's a dish and either the recipe (ingredients) or the
 // price actually changed, the PREVIOUS version is archived into product.recipeHistory first and
@@ -5893,12 +5913,14 @@ function productionStartView(){
   formCard.insertBefore(noLinksHint, outNameField);
   function updateOutputOptions(){
     const linked = selectedInput ? linkedOutputsFor(selectedInput.name) : [];
-    const opts = [...linked.map(n=>({value:n, label:n})), {value:NEW_OUTPUT, label:'+ Новий продукт'}];
-    selectedOutputName = linked[0] || NEW_OUTPUT;
+    // Крім зв'язаних із сировиною, можна одразу прив'язати готовку до товару меню (тоді готове стане його залишком).
+    const menuOnes = menuProductNames().filter(n=>!linked.some(l=>l.trim().toLowerCase()===n.trim().toLowerCase()));
+    const opts = [...linked.map(n=>({value:n, label:n})), ...menuOnes.map(n=>({value:n, label:n+' · товар меню'})), {value:NEW_OUTPUT, label:'+ Новий продукт'}];
+    selectedOutputName = linked[0] || menuOnes[0] || NEW_OUTPUT;
     outSelect.setOptions(opts);
     outSelect.setValue(selectedOutputName);
     outNameField.style.display = selectedOutputName===NEW_OUTPUT ? '' : 'none';
-    noLinksHint.style.display = linked.length===0 ? '' : 'none';
+    noLinksHint.style.display = (linked.length===0 && menuOnes.length===0) ? '' : 'none';
     noLinksHint.textContent = `Для «${selectedInput ? selectedInput.name : ''}» ще не налаштовано зв'язаних продуктів — додайте їх у Налаштуваннях → «Зв'язки готовки», або вкажіть назву нового продукту нижче.`;
   }
   updateOutputOptions();
@@ -6008,7 +6030,7 @@ function productionLinksView(){
   wrap.appendChild(el(`<div class="sub text-xs mb-4">Зв'яжіть сировину з готовим продуктом (наприклад, «М'ясо курка» → «М'ясо курка BBQ»). У «Новій готовці» після вибору сировини буде запропоновано тільки пов'язані з нею продукти.</div>`));
 
   // Унікальні назви позицій складу (по всіх складах), щоб зв'язки не прив'язувались до конкретного складу.
-  const allNames = Array.from(new Set(state.stockItems.map(i=>i.name))).sort((a,b)=>a.localeCompare(b,'uk'));
+  const allNames = Array.from(new Set(state.stockItems.map(i=>i.name).concat(menuProductNames()))).sort((a,b)=>a.localeCompare(b,'uk'));
 
   wrap.appendChild(el(`<div class="font-semibold text-sm mb-2">Наявні зв'язки</div>`));
   if(state.productionLinks.length===0){
@@ -8150,6 +8172,7 @@ function productAddView(){
   function refreshTypeUI(){
     dishSection.style.display = draftType==='dish' ? '' : 'none';
     comboSection.style.display = draftType==='combo' ? '' : 'none';
+    if(typeof stockSection!=='undefined') stockSection.style.display = draftType==='product' ? '' : 'none';
     if(draftType==='combo'){
       costPriceInput.disabled = true;
       costPriceInput.style.opacity = '.6';
@@ -8307,6 +8330,29 @@ function productAddView(){
   wrap.appendChild(comboSection);
   wrap.appendChild(costPriceField);
 
+  // --- Склади: де цей товар має власні залишки (лише тип «Товар») ---
+  const stockSection = el(`<div class="mb-4"></div>`);
+  const existingRows = editing ? stockRowsForProduct(editing.name) : [];
+  let draftStockUnit = (existingRows[0] && existingRows[0].unit) || 'шт';
+  const draftWh = new Set(editing ? existingRows.map(r=>r.warehouseId) : state.warehouses.map(w=>w.id));
+  stockSection.appendChild(el(`<div class="font-semibold text-sm mb-1">Склади</div>`));
+  stockSection.appendChild(el(`<div class="sub text-xs mb-2">На яких складах цей товар має залишки. На обраних складах він одразу з'явиться в «Залишках» (з нулем) — продажі списуватимуть його, а готовку можна прив'язати до нього.</div>`));
+  stockSection.appendChild(el(`<div class="sub text-xs mb-1.5">Одиниця виміру</div>`));
+  stockSection.appendChild(segmentedPicker([['шт','Штуки'],['кг','Кг'],['л','Літри']], draftStockUnit, (k)=>{ draftStockUnit = k; }));
+  state.warehouses.forEach(w=>{
+    const has = existingRows.some(r=>r.warehouseId===w.id);
+    const row = el(`<div class="card p-3 mb-2 flex items-center justify-between gap-3"><div class="font-semibold text-sm">${escapeHtml(w.name)}${has?' <span class="sub text-xs">· вже на складі</span>':''}</div></div>`);
+    const sw = el(`<button type="button" style="width:46px;height:26px;border-radius:999px;border:none;position:relative;flex-shrink:0"><span style="position:absolute;top:2px;width:22px;height:22px;border-radius:50%;background:#fff;transition:left .15s"></span></button>`);
+    const knob = sw.querySelector('span');
+    const paint = ()=>{ const on = draftWh.has(w.id); sw.style.background = on ? 'var(--accent)' : '#c3cbdd'; knob.style.left = on ? '22px' : '2px'; };
+    paint();
+    if(has){ sw.disabled = true; sw.style.opacity = '.6'; }
+    sw.onclick = ()=>{ if(draftWh.has(w.id)) draftWh.delete(w.id); else draftWh.add(w.id); paint(); };
+    row.appendChild(sw);
+    stockSection.appendChild(row);
+  });
+  wrap.appendChild(stockSection);
+
   const priceField = field('Ціна продажу, ' + String.fromCharCode(8372));
   const priceInput = priceField.querySelector('input');
   priceInput.setAttribute('inputmode','decimal');
@@ -8434,8 +8480,14 @@ function productAddView(){
     }
     const emptyG = draftGroups.find(g=>g.options.length===0);
     if(emptyG){ err.textContent = 'У групі «'+emptyG.label+'» немає жодного варіанта — додайте або видаліть її'; return; }
-    const data = { name, category: draftCategory, type: draftType, ingredients: draftIngredients, costPrice, price, modifier: null, optionGroups: draftGroups, comboSlots: draftSlots };
-    if(editing) updateProduct(editing.id, data);
+    const data = { name, category: draftCategory, type: draftType, ingredients: draftIngredients, costPrice, price, modifier: null, optionGroups: draftGroups, comboSlots: draftSlots,
+      warehouseIds: Array.from(draftWh), unit: draftStockUnit };
+    if(editing){
+      // Залишки товару знаходяться за назвою — при перейменуванні переносимо їх разом із товаром.
+      if(editing.type==='product' && editing.name!==name) stockRowsForProduct(editing.name).forEach(r=>{ r.name = name; });
+      updateProduct(editing.id, data);
+      if(draftType==='product'){ const prod = state.products.find(x=>x.id===editing.id); ensureProductStock(prod, data.warehouseIds, data.unit); saveState(); }
+    }
     else addProduct(data);
     editingProductId = null;
     view = 'menu';
