@@ -318,7 +318,43 @@ function applySyncedData(data){
   state = Object.assign({}, data, local);
   runMigrations();
   // Ціни закупівлі могли змінитись після створення страв — перераховуємо й, якщо щось змінилось, зберігаємо.
+  try{ if(fixCheckboxConsumptionWarehouses() && authToken) saveState(); }catch(e){ console.error('consumption fix', e); }
   try{ if(recalcMenuCosts() && authToken) saveState(); }catch(e){}
+}
+// Одноразово: списання за чеками Checkbox/Glovo, що сьогодні (08.10.2026) потрапили на «Базу» замість складу точки,
+// переносимо на склад точки: повертаємо кількість на Базу, знімаємо зі складу точки, переписуємо рядки історії.
+function fixCheckboxConsumptionWarehouses(){
+  if(!state.stockItems || !state.history || !state.orders) return false;
+  const since = new Date(2026, 9, 8, 0, 0, 0).getTime(), until = new Date(2026, 9, 9, 0, 0, 0).getTime(); // лише сьогодні; ідемпотентно
+  const norm = x=>String(x||'').trim().toLowerCase();
+  const byRef = {};
+  state.orders.forEach(o=>{ const ref = o.checkboxId || o.glovoId; if(ref) byRef[ref] = o; });
+  let moved = 0;
+  state.history.forEach(h=>{
+    if(!h.orderRef || !(h.tsMs>=since && h.tsMs<until)) return;
+    const o = byRef[h.orderRef];
+    if(!o) return;
+    const target = warehouseForLocationOrNull(o.locationId);
+    if(!target || target.id===h.warehouseId) return;
+    if(h.warehouseId!==baseWarehouseId()) return; // чіпаємо лише помилкові списання з Бази
+    const fromWh = h.warehouseId;
+    if(h.stockItemId){
+      const src = state.stockItems.find(i=>i.id===h.stockItemId);
+      if(!src) return;
+      let dst = state.stockItems.find(i=>i.warehouseId===target.id && norm(i.name)===norm(src.name));
+      if(!dst){ dst = { id: uid(), warehouseId: target.id, name: src.name, unit: src.unit, qty: 0, min: 0, costPerUnit: src.costPerUnit||0, category: src.category||'meat' }; state.stockItems.push(dst); }
+      src.qty = Number((src.qty - h.delta).toFixed(3));
+      dst.qty = Number((dst.qty + h.delta).toFixed(3));
+      h.stockItemId = dst.id;
+    } else if(h.ingredientId){
+      const mv = (wh, d)=>{ let r = state.ingredientStock.find(x=>x.ingredientId===h.ingredientId && x.warehouseId===wh); if(!r){ r = {id:uid(), warehouseId:wh, ingredientId:h.ingredientId, qty:0}; state.ingredientStock.push(r); } r.qty = Number((r.qty + d).toFixed(3)); };
+      mv(fromWh, -h.delta); mv(target.id, h.delta);
+    } else return;
+    h.warehouseId = target.id;
+    moved++;
+  });
+  if(moved) logEvent('fix', 'Перенесено списання за чеками з Бази на склад точки: '+moved+' рядків');
+  return moved>0;
 }
 async function fetchStateFromServer(){
   const r = await api('/api/state');
@@ -430,7 +466,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-07.22';
+const APP_VERSION='2026-10-08.23';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -753,8 +789,7 @@ async function login(pin){
       // the owner's browsing selection in Налаштування/Дашборд and must not follow whoever last logged in.
       const effectiveLocationId = todaySched ? todaySched.locationId : staff.locationId;
       state.activeLocationId = effectiveLocationId;
-      const wh = state.warehouses.find(w=>w.id===effectiveLocationId);
-      state.currentWarehouse = wh ? wh.id : baseWarehouseId();
+      state.currentWarehouse = warehouseForLocation(effectiveLocationId);
     }
     view = (staff.role==='prep') ? 'prepDashboard' : 'stock';
   }
@@ -3192,8 +3227,23 @@ function addToCart(product, modifierOption, picks, comboSel){
 }
 // Warehouse a sale at this location deducts stock from — warehouses were originally seeded 1:1 with
 // locations, so the warehouse of the same id is that point's own stock.
+// Склад, з якого списуються продажі точки. Пріоритет: явна прив'язка (склад → «Локація» у редагуванні складу),
+// потім збіг id (старі дані), потім збіг назви склад↔точка («ЦУМ» = «ЦУМ»), і лише тоді — «База».
+function warehouseForLocationOrNull(locationId){
+  const whs = state.warehouses || [];
+  let wh = whs.find(w=>w.locationId && w.locationId===locationId);
+  if(!wh) wh = whs.find(w=>w.id===locationId);
+  const loc = (state.locations||[]).find(l=>l.id===locationId);
+  const norm = x=>String(x||'').trim().toLowerCase();
+  if(!wh && loc){
+    const ln = norm(loc.name);
+    wh = whs.find(w=>!w.locationId && norm(w.name)===ln)
+      || (ln ? whs.find(w=>!w.locationId && norm(w.name)!=='база' && (norm(w.name).includes(ln) || ln.includes(norm(w.name)))) : null);
+  }
+  return wh || null;
+}
 function warehouseForLocation(locationId){
-  const wh = state.warehouses.find(w=>w.id===locationId);
+  const wh = warehouseForLocationOrNull(locationId);
   return wh ? wh.id : baseWarehouseId();
 }
 // Sums how much of each recipe ingredient this cart needs (across all dish lines, by qty), and
@@ -7619,6 +7669,16 @@ function warehouseEditView(){
   }
   wrap.appendChild(defaultCard);
 
+  wrap.appendChild(el(`<div class="sub text-xs mb-1.5">Склад точки</div>`));
+  const locHost = el(`<div class="mb-1"></div>`);
+  const curLoc = (state.locations||[]).find(l=>warehouseForLocationOrNull(l.id)===wh);
+  const locSel = customSelect(
+    [{value:'', label:'— не склад точки (напр. База) —'}].concat(state.locations.map(l=>({value:l.id, label:l.name}))),
+    wh.locationId || (curLoc ? curLoc.id : ''), null);
+  locHost.appendChild(locSel);
+  wrap.appendChild(locHost);
+  wrap.appendChild(el(`<div class="sub text-xs mb-4">Продажі за чеками цієї точки списуватимуться саме з цього складу.</div>`));
+
   const err = el(`<div class="text-sm mb-3" style="color:var(--danger);min-height:1.2em"></div>`);
   wrap.appendChild(err);
 
@@ -7627,6 +7687,9 @@ function warehouseEditView(){
     const name = nameInput.value.trim();
     if(!name){ err.textContent = 'Введіть назву складу'; return; }
     wh.name = name;
+    const lv = locSel.getValue();
+    if(lv){ state.warehouses.forEach(w=>{ if(w!==wh && w.locationId===lv) delete w.locationId; }); wh.locationId = lv; }
+    else delete wh.locationId;
     saveState();
     editingWarehouseId = null;
     view = warehouseEditReturnTo;
