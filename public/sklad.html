@@ -474,7 +474,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.35';
+const APP_VERSION='2026-10-08.36';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -879,10 +879,10 @@ function openStaffEdit(id){
 // Розділи складу: щоб у довгому переліку було легко орієнтуватись. Явно задане item.section має пріоритет;
 // для старих рядків розділ визначається автоматично (результат готовки → «Заготовки», товар меню → «Готові товари»).
 const STOCK_SECTIONS = [
-  { key:'raw',      label:'Сировина',      icon:'🥩' },
-  { key:'prep',     label:'Заготовки',     icon:'🔪' },
-  { key:'goods',    label:'Готові товари', icon:'🥤' },
-  { key:'supplies', label:'Розхідники',    icon:'📦' }
+  { key:'raw',      label:'Сировина',      icon:'leaf' },
+  { key:'prep',     label:'Заготовки',     icon:'flame' },
+  { key:'goods',    label:'Готові товари', icon:'tag' },
+  { key:'supplies', label:'Розхідники',    icon:'box' }
 ];
 function stockSectionOf(item){
   if(item.section && STOCK_SECTIONS.some(x=>x.key===item.section)) return item.section;
@@ -2304,8 +2304,9 @@ function tabBarItem(iconKey, label, active, onClick){
 
 // Segmented pill picker for a small set of mutually-exclusive choices (category, type, unit, etc.)
 // options: [[key,label,icon?], ...]. Returns the row element with .setActive(key)/.getActive() helpers.
-function segmentedPicker(options, activeKey, onChange){
-  const row = el(`<div class="flex gap-2 mb-4" style="background:var(--card3);border-radius:999px;padding:4px"></div>`);
+// stacked=true: іконка (ключ з ICONS, SVG у стилі застосунку) над підписом — для 3–4 довгих варіантів у ряд.
+function segmentedPicker(options, activeKey, onChange, stacked){
+  const row = el(`<div class="flex gap-2 mb-4" style="background:var(--card3);border-radius:${stacked?'22px':'999px'};padding:4px"></div>`);
   const btns = {};
   function paint(){
     Object.entries(btns).forEach(([k,btn])=>{
@@ -2317,7 +2318,10 @@ function segmentedPicker(options, activeKey, onChange){
   }
   options.forEach(opt=>{
     const key = opt[0], label = opt[1], icon = opt[2];
-    const b = el(`<button type="button" class="flex-1 flex items-center justify-center gap-1.5 py-2.5" style="border-radius:999px;font-weight:700;font-size:.85rem;border:none;transition:background .15s,color .15s,box-shadow .15s">${icon?`<span style="font-size:1rem;line-height:1">${icon}</span>`:''}<span>${escapeHtml(label)}</span></button>`);
+    const b = stacked
+      ? el(`<button type="button" class="flex-1 flex flex-col items-center justify-center gap-1" style="min-width:0;border-radius:18px;font-weight:700;font-size:.72rem;line-height:1.15;text-align:center;padding:9px 2px;border:none;transition:background .15s,color .15s,box-shadow .15s"><span style="display:block;width:22px;height:22px">${ICONS[icon]||''}</span><span>${escapeHtml(label)}</span></button>`)
+      : el(`<button type="button" class="flex-1 flex items-center justify-center gap-1.5 py-2.5" style="border-radius:999px;font-weight:700;font-size:.85rem;border:none;transition:background .15s,color .15s,box-shadow .15s">${icon?`<span style="font-size:1rem;line-height:1">${icon}</span>`:''}<span>${escapeHtml(label)}</span></button>`);
+    if(stacked){ const sv=b.querySelector('svg'); if(sv){ sv.style.width='22px'; sv.style.height='22px'; } }
     b.onclick = ()=>{ activeKey = key; paint(); if(onChange) onChange(key); };
     btns[key] = b;
     row.appendChild(b);
@@ -4416,14 +4420,15 @@ function stockView(){
   if(stockSectionFilter!=='all' && !counts[stockSectionFilter]) stockSectionFilter='all';
   if(Object.keys(counts).length>1 || stockSectionFilter!=='all'){
     const chips = el(`<div class="flex gap-2 mb-3" style="overflow-x:auto;padding-bottom:2px"></div>`);
-    const mk = (key,label,n)=>{
+    const mk = (key,label,n,icon)=>{
       const on = stockSectionFilter===key;
-      const b = el(`<button style="flex-shrink:0;white-space:nowrap;padding:7px 13px;border-radius:999px;border:none;font-size:.82rem;font-weight:600;background:${on?'var(--accent)':'var(--card3)'};color:${on?'#fff':'var(--text)'}">${escapeHtml(label)} <span style="opacity:.7">${n}</span></button>`);
+      const b = el(`<button class="flex items-center" style="gap:6px;flex-shrink:0;white-space:nowrap;padding:7px 13px;border-radius:999px;border:none;font-size:.82rem;font-weight:600;background:${on?'var(--accent)':'var(--card3)'};color:${on?'#fff':'var(--text)'}">${icon?`<span style="display:block;width:16px;height:16px">${ICONS[icon]}</span>`:''}<span>${escapeHtml(label)}</span><span style="opacity:.6">${n}</span></button>`);
+      const sv=b.querySelector('svg'); if(sv){ sv.style.width='16px'; sv.style.height='16px'; }
       b.onclick = ()=>{ stockSectionFilter = key; render(); };
       chips.appendChild(b);
     };
-    mk('all','Усі',list.length);
-    STOCK_SECTIONS.forEach(x=>{ if(counts[x.key]) mk(x.key, x.icon+' '+x.label, counts[x.key]); });
+    mk('all','Усі',list.length,'list');
+    STOCK_SECTIONS.forEach(x=>{ if(counts[x.key]) mk(x.key, x.label, counts[x.key], x.icon); });
     wrap.appendChild(chips);
   }
   const shown = stockSectionFilter==='all' ? list : list.filter(i=>stockSectionOf(i)===stockSectionFilter);
@@ -4437,7 +4442,7 @@ function stockView(){
   }).forEach(item=>{
     if(stockSectionFilter==='all' && Object.keys(counts).length>1){
       const sk = stockSectionOf(item);
-      if(sk!==lastSec){ lastSec = sk; const sd = STOCK_SECTIONS.find(x=>x.key===sk); wrap.appendChild(el(`<div class="sec-head"><div class="sec-title">${sd.icon} ${escapeHtml(sd.label)}</div></div>`)); }
+      if(sk!==lastSec){ lastSec = sk; const sd = STOCK_SECTIONS.find(x=>x.key===sk); wrap.appendChild(el(`<div class="sec-head"><div class="sec-title">${escapeHtml(sd.label)}</div></div>`)); }
     }
     const isLow = itemIsLow(item);
     const minTxt = itemHasMin(item) ? ' · мін '+fmt(item.min)+' '+item.unit : '';
@@ -4516,7 +4521,7 @@ function stockItemAddView(){
 
   wrap.appendChild(el(`<div class="sub text-xs mb-1.5">Розділ складу</div>`));
   let draftSection = editing ? stockSectionOf(editing) : (stockSectionFilter!=='all' ? stockSectionFilter : 'raw');
-  wrap.appendChild(segmentedPicker(STOCK_SECTIONS.map(x=>[x.key,x.label,x.icon]), draftSection, (key)=>{ draftSection = key; }));
+  wrap.appendChild(segmentedPicker(STOCK_SECTIONS.map(x=>[x.key,x.label,x.icon]), draftSection, (key)=>{ draftSection = key; }, true));
 
   const qtyField = field(editing ? 'Поточний залишок' : 'Початковий залишок', '0');
   const qtyInput = qtyField.querySelector('input');
