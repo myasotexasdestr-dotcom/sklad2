@@ -228,6 +228,7 @@ function runMigrations(){
   // the recipe/cost definition), so the same ingredient can have a different amount in stock at each
   // warehouse (e.g. a batch of sauce made at "База" before being sent out as a "поставка").
   if(!state.ingredientStock) state.ingredientStock = [];
+  if(!state.payouts) state.payouts = [];
   // Міграція: окремі залишки 1:1-інгредієнтів прибираємо — правдою є залишок продукту в stockItems.
   if(state.recipeIngredients && state.ingredientStock.some(r=>linkedProductName(state.recipeIngredients.find(i=>i.id===r.ingredientId)))){
     state.ingredientStock = state.ingredientStock.filter(r=>!linkedProductName(state.recipeIngredients.find(i=>i.id===r.ingredientId)));
@@ -469,7 +470,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.29';
+const APP_VERSION='2026-10-08.30';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2395,6 +2396,11 @@ function render(){
     navHost.appendChild(tabbar());
     return;
   }
+  if(view==='payroll'){
+    app.appendChild(payrollView());
+    navHost.appendChild(tabbar());
+    return;
+  }
   if(view==='checkbox'){
     app.appendChild(checkboxView());
     navHost.appendChild(tabbar());
@@ -2669,7 +2675,7 @@ function tabbar(){
       : (isPrep ? [['prepDashboard','dashboard'],['productionStart','flame'],['prepTransferLocations','transfer'],['myHistory','history']]
         : (isCashier ? [['stock','dashboard'],['purchase','purchase'],['scheduleCalendar','calendar'],['cashierRequest','transfer'],['myHistory','history']]
           : [['stock','stock'],['history','history']])));
-  let activeKey = (view==='menu' || view==='staffEdit' || view==='locationEdit' || view==='locationAdd' || view==='productAdd' || view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare' || view==='productionLinks' || view==='checkbox' || view==='glovo' || view==='glovoAdd' || view==='analytics' || view==='auditLog' || view==='shiftRatings' || view==='scheduleCalendar' || view==='scheduleDay' || view==='scheduleLocation' || view==='tasks' || view==='taskAdd') ? 'settings' : view;
+  let activeKey = (view==='payroll' || view==='menu' || view==='staffEdit' || view==='locationEdit' || view==='locationAdd' || view==='productAdd' || view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare' || view==='productionLinks' || view==='checkbox' || view==='glovo' || view==='glovoAdd' || view==='analytics' || view==='auditLog' || view==='shiftRatings' || view==='scheduleCalendar' || view==='scheduleDay' || view==='scheduleLocation' || view==='tasks' || view==='taskAdd') ? 'settings' : view;
   if(view==='stockItemAdd' || view==='warehouseAdd' || view==='warehouseEdit' || view==='inventoryStart' || view==='inventoryDetail' || view==='writeOffStart' || view==='transferStart' || view==='transferReceive' || view==='productionStart' || view==='ingredientPrepare' || view==='productionDetail' || view==='prepTransferLocations' || view==='locationTransferNeeds') activeKey = isCook ? 'productionList' : 'stock';
   if(view==='shiftAccept' || view==='notifications' || view==='myRating') activeKey = homeView();
   if(!isOwner() && (view==='transferList')) activeKey = 'stock';
@@ -3453,16 +3459,73 @@ function cashierSalaryForPeriod(staffId, periodKey){
     fastfoodTotal += dayFastfoodTotal;
     const dayAvg = dayFastfoodTotal / people;
     ffAvgSum += dayAvg;
-    fastfoodBonus += fastfoodBonusFor(dayAvg);
-    if(dateKey===todayKey) today = { people, fastfoodTotal: dayFastfoodTotal, fastfoodAvg: dayAvg, fastfoodBonus: fastfoodBonusFor(dayAvg), meatPortions: dayMeatPortions, meatBonus: dayMeatPortions*15 };
+    if(dateKey===todayKey) today = { people, fastfoodTotal: dayFastfoodTotal, fastfoodAvg: dayAvg, meatPortions: dayMeatPortions, meatBonus: dayMeatPortions*15 };
   });
+  // Бонус за фастфуд — від СЕРЕДНЬОЇ каси на людину за весь звітний період (а не по днях): середнє за відпрацьовані
+  // дні визначає сходинку, і ця денна ставка нараховується за кожен відпрацьований день. Новий період — лічильник з нуля.
+  const avgPeriod = daysWorked ? ffAvgSum/daysWorked : 0;
+  fastfoodBonus = fastfoodBonusFor(avgPeriod) * daysWorked;
 
   return {
     periodKey, daysWorked, basePay, meatPortions, meatBonus, fastfoodTotal, fastfoodBonus,
-    fastfoodAvgPerShift: daysWorked ? ffAvgSum/daysWorked : 0,   // середня каса фастфуду на людину за відпрацьований день
+    fastfoodAvgPerShift: avgPeriod,   // середня каса фастфуду на людину за період (за відпрацьовані дні)
+    fastfoodDailyRate: fastfoodBonusFor(avgPeriod),
     bonusTotal: meatBonus + fastfoodBonus, today,
     total: basePay + meatBonus + fastfoodBonus
   };
+}
+let payrollPeriod = null;
+// Власник: зарплати й бонуси всіх касирів за обраний період + статус виплати (отримано / очікує).
+function payrollView(){
+  const wrap = el(`<div></div>`);
+  const topBar = el(`
+    <div class="flex items-center gap-3 mb-4">
+      <button id="prlBack" class="navicon-btn" style="background:var(--card3)">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="font-bold" style="font-size:1.1rem">Зарплати й виплати</div>
+    </div>`);
+  topBar.querySelector('#prlBack').onclick = ()=>{ view='settings'; render(); };
+  wrap.appendChild(topBar);
+  const keys = recentPeriodKeys(4);
+  if(!payrollPeriod || !keys.includes(payrollPeriod)) payrollPeriod = keys[0];
+  const curKey = keys[0];
+  const sel = customSelect(keys.map(k=>({value:k, label:periodLabel(k)+(k===curKey?' (поточний)':'')})), payrollPeriod, (v)=>{ payrollPeriod = v; render(); });
+  const selHost = el(`<div class="mb-4"></div>`); selHost.appendChild(sel); wrap.appendChild(selHost);
+
+  const cashiers = state.staff.filter(x=>x.role==='cashier');
+  if(cashiers.length===0){ wrap.appendChild(el(`<div class="sub text-center py-10">Касирів ще немає</div>`)); return wrap; }
+  let sumAll = 0, sumPaid = 0;
+  cashiers.forEach(c=>{
+    const sal = cashierSalaryForPeriod(c.id, payrollPeriod);
+    const pay = payoutFor(c.id, payrollPeriod);
+    sumAll += sal.total; if(pay) sumPaid += pay.amount;
+    const card = el(`
+      <div class="card p-3 mb-2">
+        <div class="flex items-center justify-between">
+          <div class="font-semibold">${escapeHtml(c.name)}</div>
+          <div class="font-bold">${fmtMoney(pay ? pay.amount : sal.total)}</div>
+        </div>
+        <div class="sub text-xs mt-1">База ${fmtMoney(sal.basePay)} (${sal.daysWorked} зм.) · Фастфуд ${fmtMoney(sal.fastfoodBonus)} (сер. каса ${fmtMoney(sal.fastfoodAvgPerShift)}) · М'ясо ${fmtMoney(sal.meatBonus)} (${fmt(sal.meatPortions)} порц.)</div>
+        <div class="text-xs mt-1 font-semibold" style="color:${pay?'var(--ok)':(payrollPeriod===curKey?'var(--sub)':'var(--danger)')}">${pay ? '✓ Отримано · '+escapeHtml(pay.ts) : (payrollPeriod===curKey ? 'Період ще триває' : (sal.daysWorked>0 ? 'Ще не отримано' : 'Змін не було'))}</div>
+      </div>`);
+    wrap.appendChild(card);
+  });
+  wrap.appendChild(el(`<div class="card p-3 mt-3"><div class="flex justify-between text-sm"><span class="sub">Усього нараховано</span><b>${fmtMoney(sumAll)}</b></div><div class="flex justify-between text-sm mt-1"><span class="sub">Вже отримано</span><b>${fmtMoney(sumPaid)}</b></div></div>`));
+  return wrap;
+}
+// ---- Виплати: за кожен завершений період касир натискає «Отримати» — фіксуємо суму на момент отримання.
+function payoutFor(staffId, periodKey){
+  return (state.payouts||[]).find(x=>x.staffId===staffId && x.periodKey===periodKey) || null;
+}
+function previousPeriodKey(){ return recentPeriodKeys(2)[1]; }
+function claimPayout(staffId, periodKey){
+  if(payoutFor(staffId, periodKey)) return;
+  const sal = cashierSalaryForPeriod(staffId, periodKey);
+  if(!state.payouts) state.payouts = [];
+  state.payouts.push({ id: uid(), staffId, periodKey, amount: Math.round(sal.total*100)/100, base: sal.basePay, bonus: sal.bonusTotal, ts: nowStr(), tsMs: Date.now() });
+  logEvent('payout', `Виплату за період ${periodLabel(periodKey)} отримано: ${fmtMoney(sal.total)}`);
+  saveState(); render();
 }
 // Каса точки за сьогодні — сумарна виручка всіх замовлень (м'ясо + фастфуд) на цій точці за
 // сьогодні. Показуємо касиру лише якщо він сьогодні на зміні.
@@ -4137,19 +4200,43 @@ function stockView(){
         <div class="card p-4 mb-4">
           <div class="flex items-center justify-between mb-2"><div class="font-semibold">Бонуси</div><div class="font-bold" style="color:var(--accent2)">${fmtMoney(salary.bonusTotal)}</div></div>
           <div class="flex items-center justify-between py-2" style="border-top:1px solid var(--line)">
-            <div><div class="text-sm font-semibold">Фастфуд</div><div class="sub text-xs">Середня каса на людину за зміну: ${fmtMoney(salary.fastfoodAvgPerShift)}</div></div>
-            <div class="font-bold">${fmtMoney(salary.fastfoodBonus)}</div>
+            <div><div class="text-sm font-semibold">Фастфуд</div><div class="sub text-xs">Середня каса на людину за період: ${fmtMoney(salary.fastfoodAvgPerShift)}</div></div>
+            <div class="font-bold" style="white-space:nowrap">${fmtMoney(salary.fastfoodBonus)}</div>
           </div>
           <div class="flex items-center justify-between py-2" style="border-top:1px solid var(--line)">
             <div><div class="text-sm font-semibold">М'ясо</div><div class="sub text-xs">${fmt(salary.meatPortions)} порц. × 15 ₴</div></div>
-            <div class="font-bold">${fmtMoney(salary.meatBonus)}</div>
+            <div class="font-bold" style="white-space:nowrap">${fmtMoney(salary.meatBonus)}</div>
           </div>
           ${salary.today ? `<div style="border-top:1px solid var(--line);padding-top:8px;margin-top:2px"><div class="sub text-xs mb-0.5">Сьогодні (${salary.today.people} ${salary.today.people>1?'на зміні':'на зміні'})</div>
-            ${todayLine('Фастфуд на людину', fmtMoney(salary.today.fastfoodAvg)+' → '+fmtMoney(salary.today.fastfoodBonus))}
+            ${todayLine('Каса фастфуду на людину', fmtMoney(salary.today.fastfoodAvg))}
             ${todayLine('Порції м\'яса', fmt(salary.today.meatPortions)+' × 15 = '+fmtMoney(salary.today.meatBonus))}</div>` : ''}
-          <div class="flex justify-between text-xs sub mt-3" style="border-top:1px solid var(--line);padding-top:8px"><span>Разом до виплати (зарплата + бонуси)</span><b style="color:var(--text)">${fmtMoney(salary.total)}</b></div>
         </div>
       `));
+      // До виплати за попередній період: сума + «Отримати» → після натискання «Отримано».
+      { const prevKey = previousPeriodKey();
+        const prev = cashierSalaryForPeriod(u0.id, prevKey);
+        if(prev.daysWorked>0){
+          const pay = payoutFor(u0.id, prevKey);
+          const row = el(`
+            <div class="card p-4 mb-4">
+              <div class="sub text-xs mb-1">До виплати за попередній період · ${escapeHtml(periodLabel(prevKey))}</div>
+              <div class="flex items-center justify-between gap-3">
+                <div class="font-bold" style="font-size:1.4rem">${fmtMoney(pay ? pay.amount : prev.total)}</div>
+                <div data-slot></div>
+              </div>
+            </div>`);
+          const slot = row.querySelector('[data-slot]');
+          if(pay){
+            slot.innerHTML = '<span class="font-semibold" style="color:var(--ok)">✓ Отримано</span>';
+            row.appendChild(el(`<div class="sub text-xs mt-1">${escapeHtml(pay.ts)}</div>`));
+          } else {
+            const btn = el(`<button class="btn-solid" style="padding:10px 22px">Отримати</button>`);
+            btn.onclick = ()=> appConfirm('Підтвердити, що ви отримали '+fmtMoney(prev.total)+' за період '+periodLabel(prevKey)+'?', ()=> claimPayout(u0.id, prevKey));
+            slot.appendChild(btn);
+          }
+          wrap.appendChild(row);
+        }
+      }
 
       // Каса точки за сьогодні — лише якщо касир сьогодні на зміні (isScheduledToday); якщо ні, її
       // все одно не видно (як і решту функціоналу продажів на цю точку).
@@ -7304,6 +7391,7 @@ function settingsView(){
     { label: 'Меню і ціни', icon: 'tag', action: ()=>{ view='menu'; render(); } },
     { label: 'Історія закупівель', icon: 'receipt', action: ()=> appAlert('Цей розділ ще в розробці') },
     { label: 'Поставки', icon: 'transfer', action: ()=>{ view='transferList'; render(); } },
+    { label: 'Зарплати й виплати', icon: 'receipt', action: ()=>{ payrollPeriod=null; view='payroll'; render(); } },
     { label: 'Рецепти', icon: 'leaf', action: ()=>{ view='ingredients'; render(); } },
     { label: 'Нова заготовка', icon: 'flame', action: ()=> openPrepare(null, 'settings') },
     { label: 'Нова готовка', icon: 'flame', action: ()=>{ view='productionStart'; render(); } },

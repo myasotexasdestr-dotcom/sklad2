@@ -279,12 +279,19 @@ function stripManualSales(newData, oldData, role) {
 // (піни й хеші не віддаються нікому — див. sanitizeOut)
 // Усе змінене не-власником у розділах, що належать власнику, ігнорується (на сервері, а не лише в інтерфейсі).
 const OWNER_ONLY_KEYS = ['staff', 'locations', 'shiftSchedule', 'productionLinks', 'allowNegativeStock', 'glovo'];
-function protectOwnerData(newData, oldData) {
+function protectOwnerData(newData, oldData, staffId) {
   const out = Object.assign({}, newData);
   OWNER_ONLY_KEYS.forEach(k => { if (oldData[k] === undefined) delete out[k]; else out[k] = oldData[k]; });
   // Checkbox: зіставлення й перемикачі — лише власник; службові лічильники/каталог позицій — можна.
   const oc = oldData.checkbox || {}, nc = newData.checkbox || {};
   out.checkbox = Object.assign({}, nc, { registerMap: oc.registerMap || {}, itemMap: oc.itemMap || {}, blockManual: oc.blockManual, registers: oc.registers || [], enabled: oc.enabled });
+  // Виплати: не-власник може лише ДОДАТИ власний запис «отримано» (за себе); існуючі змінити/видалити не може.
+  const oldPay = Array.isArray(oldData.payouts) ? oldData.payouts : [];
+  const added = (Array.isArray(newData.payouts) ? newData.payouts : []).filter(x => x && typeof x === 'object' && x.staffId === staffId &&
+    typeof x.periodKey === 'string' && /^\d{4}-\d{2}-[AB]$/.test(x.periodKey) && Number.isFinite(Number(x.amount)) &&
+    !oldPay.some(o => o.id === x.id || (o.staffId === staffId && o.periodKey === x.periodKey)));
+  const seen = new Set();
+  out.payouts = oldPay.concat(added.filter(x => { const k = x.staffId + x.periodKey; if (seen.has(k)) return false; seen.add(k); return true; }));
   return out;
 }
 
@@ -314,7 +321,7 @@ app.put('/api/state', requireAuth, (req, res) => {
   }
   stripManualSales(newData, currentData, role);
   if (role !== 'owner') {
-    newData = protectOwnerData(newData, currentData);
+    newData = protectOwnerData(newData, currentData, req.staffId);
   } else {
     // Власник не може випадково (або зловмисно) лишити систему без жодного власника.
     if (!Array.isArray(newData.staff)) return res.status(400).json({ error: 'owner_required' });
