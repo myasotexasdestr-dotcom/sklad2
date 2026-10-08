@@ -270,6 +270,7 @@ function runMigrations(){
   // пропонуються при виборі конкретної сировини в «Новій готовці».
   if(!state.productionLinks) state.productionLinks = [];
   // Норми автосписання розхідників: perOrder — на кожне замовлення (qty; glovoQty — окрема норма для Glovo), perShift — на зміну (при закритті зміни).
+  if(!state.supplyUsage) state.supplyUsage = [];
   if(!state.supplyNorms) state.supplyNorms = { perOrder: [], perShift: [] };
   if(!Array.isArray(state.supplyNorms.perOrder)) state.supplyNorms.perOrder = [];
   if(!Array.isArray(state.supplyNorms.perShift)) state.supplyNorms.perShift = [];
@@ -480,7 +481,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.40';
+const APP_VERSION='2026-10-08.41';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -945,6 +946,7 @@ function deleteStockItem(id){
 // Mutates item.qty and logs a history entry, WITHOUT saving/rendering (caller does that once, so bulk
 // corrections like an inventory don't re-render per line).
 function recordStockChange(item, delta, reason){
+  const qtyBefore = item.qty;
   { const next = Number((item.qty + delta).toFixed(3)); item.qty = allowNegativeStock() ? next : Math.max(0, next); }
   const u = curUser();
   state.history.unshift({
@@ -958,6 +960,30 @@ function recordStockChange(item, delta, reason){
   });
   if(historyCapture) historyCapture.push({ name: item.name, unit: item.unit, delta });
   if(state.history.length>300) state.history.pop();
+  logSupplyUse(item, item.qty - qtyBefore, reason);
+}
+// Облік витрат на розхідники для аналітики: окремий агрегований журнал по днях (історія складу обмежена 300 записами).
+// Витрата = від'ємний рух розхідника; надлишок при закритті зміни зменшує витрату. Надходження (закупівлі) не рахуються.
+function supplyUseKind(reason){
+  if(reason===NORM_ORDER_REASON) return 'order';
+  if(reason===NORM_SHIFT_REASON) return 'shift';
+  if(reason==='Закриття зміни') return 'shortage';
+  if(reason==='Продаж') return 'sale';
+  return 'other';
+}
+function logSupplyUse(item, delta, reason, kindOverride){
+  if(!delta || !item || stockSectionOf(item)!=='supplies') return;
+  const kind = kindOverride || supplyUseKind(reason);
+  if(delta>0 && kind!=='shortage' && !kindOverride) return;
+  const used = -delta;
+  const dk = localDateKey(new Date());
+  if(!state.supplyUsage) state.supplyUsage = [];
+  const key = String(item.name||'').trim().toLowerCase();
+  let row = state.supplyUsage.find(r=>r.dateKey===dk && r.warehouseId===item.warehouseId && r.kind===kind && String(r.name||'').trim().toLowerCase()===key);
+  if(!row){ row = { dateKey: dk, warehouseId: item.warehouseId, name: item.name, unit: item.unit, kind, qty: 0, cost: 0 }; state.supplyUsage.push(row); }
+  row.qty = Number((row.qty + used).toFixed(3));
+  row.cost = Number((row.cost + used*(Number(item.costPerUnit)||0)).toFixed(2));
+  if(state.supplyUsage.length>4000) state.supplyUsage.splice(0, state.supplyUsage.length-4000);
 }
 function updateStockItem(id, data){
   const item = state.stockItems.find(i=>i.id===id);
@@ -2881,6 +2907,46 @@ function analyticsView(){
     });
   }
 
+  // --- Витрати на розхідники ---
+  wrap.appendChild(el(`<div class="font-bold mb-2 mt-2" style="font-size:.95rem">Витрати на розхідники</div>`));
+  {
+    const KIND = { order:'Автосписання на замовлення', shift:'Норми на зміну', shortage:'Недостача при закритті зміни', sale:'У рецептах страв', other:'Інші списання' };
+    const rows = (state.supplyUsage||[]).filter(r=>dateKeyInRange(r.dateKey, analyticsPeriod));
+    if(rows.length===0){
+      wrap.appendChild(el(`<div class="sub text-sm py-3 mb-4">За цей період витрат на розхідники ще не було. Задайте норми в «Норми розхідників» і закривайте зміни — витрати з'являться тут.</div>`));
+    } else {
+      const total = rows.reduce((a,r)=>a+r.cost,0);
+      const byKind = {}; rows.forEach(r=>{ byKind[r.kind]=(byKind[r.kind]||0)+r.cost; });
+      let kindHtml = '';
+      Object.keys(KIND).filter(k=>byKind[k]).forEach(k=>{ kindHtml += `<div class="flex items-center justify-between text-sm mt-1"><span class="sub">${KIND[k]}</span><span class="font-bold">${fmtMoney(byKind[k])}</span></div>`; });
+      wrap.appendChild(el(`
+        <div class="card p-3 mb-2">
+          <div class="flex items-center justify-between text-sm"><span class="font-semibold">Разом</span><span class="font-bold" style="color:var(--danger)">${fmtMoney(total)}</span></div>
+          ${kindHtml}
+        </div>`));
+      const multiWhUse = state.warehouses.length>1;
+      const whIds = Array.from(new Set(rows.map(r=>r.warehouseId)));
+      whIds.forEach(wid=>{
+        const wrows = rows.filter(r=>r.warehouseId===wid);
+        if(multiWhUse){
+          const wn = (state.warehouses.find(w=>w.id===wid)||{}).name || '—';
+          const wsum = wrows.reduce((a,r)=>a+r.cost,0);
+          wrap.appendChild(el(`<div class="flex items-center justify-between text-xs sub mb-1 mt-2"><span>${escapeHtml(wn)}</span><span>${fmtMoney(wsum)}</span></div>`));
+        }
+        const byItem = {};
+        wrows.forEach(r=>{ const k=r.name.trim().toLowerCase(); const x = byItem[k] || (byItem[k]={ name:r.name, unit:r.unit, qty:0, cost:0 }); x.qty+=r.qty; x.cost+=r.cost; });
+        Object.values(byItem).sort((a,b)=>b.cost-a.cost).slice(0,15).forEach(x=>{
+          wrap.appendChild(el(`
+            <div class="card p-3 mb-2 flex items-center justify-between gap-3">
+              <div><div class="font-semibold">${escapeHtml(x.name)}</div><div class="sub text-xs">${fmt(Number(x.qty.toFixed(2)))} ${escapeHtml(x.unit)}</div></div>
+              <div class="text-sm font-bold">${fmtMoney(x.cost)}</div>
+            </div>`));
+        });
+      });
+      wrap.appendChild(el(`<div class="mb-2"></div>`));
+    }
+  }
+
   // --- Усушка ---
   wrap.appendChild(el(`<div class="font-bold mb-2 mt-2" style="font-size:.95rem">Усушка</div>`));
   const shr = shrinkageReport(analyticsPeriod);
@@ -3848,7 +3914,7 @@ function restoreOrderNorms(oids){
   (state.history||[]).forEach(h=>{
     if(h.reason===NORM_ORDER_REASON && oids.includes(h.orderRef)){
       const it = state.stockItems.find(i=>i.id===h.stockItemId);
-      if(it) it.qty = Number((it.qty - h.delta).toFixed(3));
+      if(it){ it.qty = Number((it.qty - h.delta).toFixed(3)); logSupplyUse(it, -h.delta, h.reason, 'order'); }
     }
   });
   // Записи норм прибираємо з історії, щоб баланс історії лишався узгодженим із залишком.
