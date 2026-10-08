@@ -468,7 +468,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.23';
+const APP_VERSION='2026-10-08.25';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -1023,14 +1023,12 @@ function recordPurchase(whId, lines){
 // lines: [{ingredientId, name, unit, qty}]
 function createTransfer(fromWhId, toWhId, lines){
   const u = curUser();
-  lines.forEach(l=>{
-    const ing = state.recipeIngredients.find(i=>i.id===l.ingredientId);
-    if(ing) recordIngredientChange(ing, fromWhId, -l.qty, 'Поставка (відправлено)');
-  });
+  lines.forEach(l=> transferLineChange(l, fromWhId, -l.qty, 'Поставка (відправлено)'));
   const transfer = {
     id: uid(), fromWarehouseId: fromWhId, toWarehouseId: toWhId, status: 'SENT',
-    createdBy: u ? u.name : '-', createdAt: nowStr(), receivedBy: null, receivedAt: null,
-    lines: lines.map(l=>({ ingredientId: l.ingredientId, name: l.name, unit: l.unit, sentQty: l.qty, receivedQty: null }))
+    createdBy: u ? u.name : '-', createdAt: nowStr(), createdMs: Date.now(), receivedBy: null, receivedAt: null,
+    lines: lines.map(l=>({ kind: l.kind==='product' ? 'product' : 'ingredient', ingredientId: l.ingredientId||null, stockName: l.stockName||null,
+      name: l.name, unit: l.unit, sentQty: l.qty, receivedQty: null }))
   };
   state.transfers.unshift(transfer);
   const fromName = (state.warehouses.find(w=>w.id===fromWhId)||{}).name || '';
@@ -1039,19 +1037,17 @@ function createTransfer(fromWhId, toWhId, lines){
   saveState(); render();
   return transfer;
 }
-// received: [{ingredientId, qty}] — actual quantity counted at the receiving warehouse (defaults to
-// sentQty in the UI, but the receiver can correct it, which is logged as a розбіжність).
+// received: [{key, qty}] — фактично пораховано на складі-отримувачі (за замовчуванням = відправлено; розбіжність логуємо).
 function receiveTransfer(transferId, received){
   const t = state.transfers.find(x=>x.id===transferId);
   if(!t || t.status!=='SENT') return;
   const u = curUser();
   const toName = (state.warehouses.find(w=>w.id===t.toWarehouseId)||{}).name || '';
   t.lines.forEach(line=>{
-    const rec = received.find(r=>r.ingredientId===line.ingredientId);
+    const rec = received.find(r=> r.key ? r.key===lineKey(line) : r.ingredientId===line.ingredientId);
     const qty = rec ? Number(rec.qty)||0 : line.sentQty;
     line.receivedQty = qty;
-    const ing = state.recipeIngredients.find(i=>i.id===line.ingredientId);
-    if(ing && qty>0) recordIngredientChange(ing, t.toWarehouseId, qty, 'Поставка (прийнято)');
+    if(qty>0) transferLineChange(line, t.toWarehouseId, qty, 'Поставка (прийнято)');
   });
   t.status = 'RECEIVED';
   t.receivedBy = u ? u.name : '-';
@@ -1060,18 +1056,45 @@ function receiveTransfer(transferId, received){
   logEvent('transfer', `Прийнято поставку на «${toName}»${hasDiscrepancy?' (з розбіжністю)':''}`);
   saveState(); render();
 }
-// Only while still SENT (not yet received) — returns the shipped stock back to the sender.
+// Лише поки SENT (ще не прийнята) — повертає відправлене на склад-відправник. Може власник або той, хто відправляв зі свого складу.
+function canCancelTransfer(t){ return isOwner() || (canTransfer() && t.fromWarehouseId===state.currentWarehouse); }
 function cancelTransfer(transferId){
   const t = state.transfers.find(x=>x.id===transferId);
   if(!t || t.status!=='SENT') return;
-  t.lines.forEach(line=>{
-    const ing = state.recipeIngredients.find(i=>i.id===line.ingredientId);
-    if(ing) recordIngredientChange(ing, t.fromWarehouseId, line.sentQty, 'Поставка скасована');
-  });
+  t.lines.forEach(line=> transferLineChange(line, t.fromWarehouseId, line.sentQty, 'Поставка скасована'));
   t.status = 'CANCELLED';
   const fromName = (state.warehouses.find(w=>w.id===t.fromWarehouseId)||{}).name || '';
   logEvent('transfer', `Скасовано поставку зі складу «${fromName}»`);
   saveState(); render();
+}
+// ---- Що можна відправляти поставкою: готові інгредієнти (рецепти) + сирі продукти складу, які не є «1:1-інгредієнтом»
+// (їх і так видно як інгредієнт, обидва шляхи рухають той самий залишок).
+function lineKey(l){ return l.kind==='product' ? 'p:'+String(l.stockName||l.name).trim().toLowerCase() : 'i:'+l.ingredientId; }
+function transferCatalog(whId){
+  const norm = x=>String(x||'').trim().toLowerCase();
+  const ings = state.recipeIngredients.filter(i=>!i.warehouseId || i.warehouseId===whId);
+  const covered = new Set(ings.map(i=>linkedProductName(i)).filter(Boolean).map(norm));
+  const out = ings.map(i=>({ kind:'ingredient', ing:i, name:i.name, unit:i.unit }));
+  state.stockItems.filter(x=>x.warehouseId===whId && !covered.has(norm(x.name))).forEach(x=> out.push({ kind:'product', name:x.name, unit:x.unit }));
+  return out.sort((a,b)=>a.name.localeCompare(b.name,'uk'));
+}
+function catalogQty(c, whId){
+  return c.kind==='ingredient' ? ingredientQtyAt(c.ing.id, whId) : ((stockRowByName(c.name, whId)||{}).qty || 0);
+}
+function catalogMin(c, whId){
+  const row = c.kind==='product' ? stockRowByName(c.name, whId) : (c.ing ? linkedStockRow(c.ing, whId, false) : null);
+  return row ? (Number(row.min)||0) : 0;
+}
+function transferLineChange(line, whId, delta, reason){
+  if(line.kind==='product'){
+    const name = line.stockName || line.name;
+    const sib = stockRowsForProduct(name)[0];
+    const row = findOrCreateStockItemForPurchase(name, whId, { unit: sib?sib.unit:line.unit, min:0, costPerUnit: sib?(sib.costPerUnit||0):0, category: sib?(sib.category||'meat'):'meat' });
+    recordStockChange(row, delta, reason);
+  } else {
+    const ing = state.recipeIngredients.find(i=>i.id===line.ingredientId);
+    if(ing) recordIngredientChange(ing, whId, delta, reason);
+  }
 }
 function pendingTransfersFor(warehouseId){
   return state.transfers.filter(t=>t.toWarehouseId===warehouseId && t.status==='SENT');
@@ -2669,6 +2692,7 @@ function tabbar(){
   if(view==='transferStart' && transferReturnTo==='locationStock') activeKey = 'dashboard';
   // "Закупівля" (нове поповнення складу закупівлею) відкрита з Закупівель, або, у касира, з власної вкладки «Закупка».
   if(view==='purchaseCreate') activeKey = 'purchase';
+  if(isOwner() && (view==='prepTransferLocations' || view==='locationTransferNeeds' || (view==='transferStart' && transferReturnTo==='locationTransferNeeds'))) activeKey = 'purchase';
   const bar = el(`<div class="navbar-pill navbar-tabs"></div>`);
   const LABELS = { dashboard:'Головна', purchase:'Закупівлі', stock:'Склад', settings:'Ще', productionList:'Готовка',
     prepDashboard:'Головна', productionStart:'Готовка', prepTransferLocations:'Поставки', myHistory:'Історія',
@@ -2988,7 +3012,12 @@ function locationStockView(){
     return wrap;
   }
 
-  const items = state.stockItems.filter(i=>i.warehouseId===loc.id);
+  const locWh = warehouseForLocationOrNull(loc.id);
+  if(!locWh){
+    wrap.appendChild(el(`<div class="card p-3 mb-3 text-sm">Для цієї точки не знайдено склад. Відкрийте потрібний склад (Склад → редагування) і виберіть поле «Склад точки».</div>`));
+    return wrap;
+  }
+  const items = state.stockItems.filter(i=>i.warehouseId===locWh.id);
 
   function itemRow(item){
     const isLow = item.qty <= item.min;
@@ -3004,7 +3033,7 @@ function locationStockView(){
   if(items.length===0){
     wrap.appendChild(el(`<div class="sub text-sm mb-5">На цьому складі поки немає продуктів</div>`));
   } else {
-    const low = lowStockFor(loc.id).slice().sort((a,b)=>a.name.localeCompare(b.name,'uk'));
+    const low = lowStockFor(locWh.id).slice().sort((a,b)=>a.name.localeCompare(b.name,'uk'));
     wrap.appendChild(el(`<div class="font-bold mb-2" style="font-size:.95rem; color:var(--danger)">Необхідно поповнення</div>`));
     if(low.length===0){
       wrap.appendChild(el(`<div class="sub text-sm mb-5">Дефіциту немає</div>`));
@@ -3043,16 +3072,27 @@ function prepTransferLocationsView(){
   `);
   topBar.querySelector('#ptlBack').onclick = ()=>{ view = isOwner() ? 'purchase' : 'prepDashboard'; render(); };
   wrap.appendChild(topBar);
-  wrap.appendChild(el(`<div class="sub text-xs mb-4">Оберіть точку, щоб побачити, чого там бракує і що вже є, а потім відправити поставку.</div>`));
+
+  const inTransit = state.transfers.filter(t=>t.status==='SENT' && (isOwner() || t.fromWarehouseId===state.currentWarehouse || t.toWarehouseId===state.currentWarehouse));
+  const listRow = el(`
+    <div class="card p-3 mb-4 flex items-center justify-between" style="cursor:pointer">
+      <div><div class="font-semibold">Усі поставки</div><div class="sub text-xs">${inTransit.length>0 ? 'В дорозі: '+inTransit.length+' · ' : ''}історія, прийом і скасування</div></div>
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--sub)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+    </div>`);
+  listRow.onclick = ()=>{ view='transferList'; render(); };
+  wrap.appendChild(listRow);
+  wrap.appendChild(el(`<div class="sub text-xs mb-3">Оберіть точку, щоб побачити, чого там бракує і що вже є, а потім відправити поставку.</div>`));
 
   if(state.locations.length===0){
     wrap.appendChild(el(`<div class="sub text-center py-10">Поки немає жодної точки</div>`));
     return wrap;
   }
   state.locations.forEach(loc=>{
+    const wh = warehouseForLocationOrNull(loc.id);
+    const incoming = wh ? state.transfers.filter(t=>t.status==='SENT' && t.toWarehouseId===wh.id).length : 0;
     const row = el(`
       <div class="card p-3 mb-2 flex items-center justify-between" style="cursor:pointer">
-        <div class="font-semibold">${escapeHtml(loc.name)}</div>
+        <div><div class="font-semibold">${escapeHtml(loc.name)}</div>${incoming?`<div class="sub text-xs">В дорозі: ${incoming}</div>`:(wh?'':'<div class="text-xs low">немає складу</div>')}</div>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--sub)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
       </div>
     `);
@@ -3062,9 +3102,8 @@ function prepTransferLocationsView(){
   return wrap;
 }
 
-// Скільки готових інгредієнтів (заготовки/соуси) зараз є на конкретній точці, з "Необхідно
-// поповнення" (те, чого там взагалі немає) першим, і кнопкою "Створити поставку" внизу, яка веде
-// на форму поставки вже з цією точкою як "Куди".
+// Що зараз є на складі конкретної точки (готові інгредієнти + продукти), "Необхідно поповнення" першим
+// (немає або нижче мінімуму), і кнопка "Створити поставку", яка веде на форму вже з цією точкою як "Куди".
 function locationTransferNeedsView(){
   const loc = state.locations.find(l=>l.id===viewingLocationId) || state.locations[0];
   const wrap = el(`<div></div>`);
@@ -3083,36 +3122,58 @@ function locationTransferNeedsView(){
     wrap.appendChild(el(`<div class="sub text-center py-10">Точку не знайдено</div>`));
     return wrap;
   }
-
-  const items = state.recipeIngredients.filter(i=>!i.warehouseId || i.warehouseId===loc.id);
-  if(items.length===0){
-    wrap.appendChild(el(`<div class="sub text-sm py-6 text-center">Для цієї точки ще немає жодного інгредієнта в довіднику.</div>`));
+  const wh = warehouseForLocationOrNull(loc.id);
+  if(!wh){
+    wrap.appendChild(el(`<div class="card p-3 text-sm">Для цієї точки не знайдено склад, тому поставку відправити нікуди. Власнику: відкрийте склад точки (Склад → редагування) і виберіть поле «Склад точки».</div>`));
     return wrap;
   }
 
-  function ingRow(ing, qty){
+  const items = transferCatalog(wh.id).concat(
+    // позиції, яких на складі точки ще немає взагалі, але вони є в довіднику рецептів/на Базі
+    []);
+  // Також показуємо сирі продукти/інгредієнти, що є на складі-відправнику, а на точці ще не заведені.
+  const baseId = state.defaultWarehouseId || baseWarehouseId();
+  const known = new Set(items.map(c=>lineKey(c.kind==='ingredient' ? {kind:'ingredient', ingredientId:c.ing.id} : {kind:'product', stockName:c.name})));
+  if(baseId && baseId!==wh.id){
+    transferCatalog(baseId).forEach(c=>{
+      const k = lineKey(c.kind==='ingredient' ? {kind:'ingredient', ingredientId:c.ing.id} : {kind:'product', stockName:c.name});
+      if(!known.has(k)){ known.add(k); items.push(c); }
+    });
+  }
+  if(items.length===0){
+    wrap.appendChild(el(`<div class="sub text-sm py-6 text-center">Поки немає чого відправляти.</div>`));
+    return wrap;
+  }
+
+  const incoming = state.transfers.filter(t=>t.status==='SENT' && t.toWarehouseId===wh.id);
+  if(incoming.length>0){
+    wrap.appendChild(el(`<div class="card p-3 mb-3" style="background:rgba(232,163,23,.14);border:1px solid rgba(232,163,23,.35)"><div class="font-semibold text-sm">В дорозі на точку: ${incoming.length}</div><div class="sub text-xs mt-0.5">${incoming.map(t=>t.lines.map(l=>escapeHtml(l.name)+' '+fmt(l.sentQty)+' '+escapeHtml(l.unit)).join(', ')).join(' · ')}</div></div>`));
+  }
+
+  function ingRow(c, qty, min){
+    const low = qty<=min;
     return el(`
       <div class="card p-3 mb-2">
-        <div class="font-semibold">${escapeHtml(ing.name)}</div>
-        <div class="text-sm ${qty<=0?'low font-semibold':'sub'}">${fmt(qty)} ${escapeHtml(ing.unit)} ${qty<=0?'· немає!':''}</div>
+        <div class="font-semibold">${escapeHtml(c.name)}</div>
+        <div class="text-sm ${low?'low font-semibold':'sub'}">${fmt(qty)} ${escapeHtml(c.unit)} ${qty<=0?'· немає!':(low?'· мало!':'')}</div>
+        ${min>0?`<div class="sub text-xs mt-0.5">мін ${fmt(min)} ${escapeHtml(c.unit)}</div>`:''}
       </div>
     `);
   }
-
-  const withQty = items.map(ing=>({ ing, qty: ingredientQtyAt(ing.id, loc.id) }));
-  const low = withQty.filter(x=>x.qty<=0).slice().sort((a,b)=>a.ing.name.localeCompare(b.ing.name,'uk'));
+  const withQty = items.map(c=>({ c, qty: catalogQty(c, wh.id), min: catalogMin(c, wh.id) }));
+  const low = withQty.filter(x=>x.qty<=x.min).sort((a,b)=>a.c.name.localeCompare(b.c.name,'uk'));
 
   wrap.appendChild(el(`<div class="font-bold mb-2" style="font-size:.95rem; color:var(--danger)">Необхідно поповнення</div>`));
   if(low.length===0){
     wrap.appendChild(el(`<div class="sub text-sm mb-5">Дефіциту немає</div>`));
   } else {
     const lowWrap = el(`<div class="mb-5"></div>`);
-    low.forEach(x=> lowWrap.appendChild(ingRow(x.ing, x.qty)));
+    low.forEach(x=> lowWrap.appendChild(ingRow(x.c, x.qty, x.min)));
     wrap.appendChild(lowWrap);
   }
 
   wrap.appendChild(el(`<div class="font-bold mb-2" style="font-size:.95rem">Усі залишки</div>`));
-  withQty.slice().sort((a,b)=>a.ing.name.localeCompare(b.ing.name,'uk')).forEach(x=> wrap.appendChild(ingRow(x.ing, x.qty)));
+  withQty.slice().sort((a,b)=>a.c.name.localeCompare(b.c.name,'uk')).forEach(x=> wrap.appendChild(ingRow(x.c, x.qty, x.min)));
 
   const createBtn = el(`<button class="w-full btn-solid py-3 mt-4">Створити поставку</button>`);
   createBtn.onclick = ()=>{ transferReturnTo = 'locationTransferNeeds'; view='transferStart'; render(); };
@@ -3629,6 +3690,10 @@ function purchaseView(){
   const actRow = el(`<div class="flex items-start mb-6"></div>`);
   const buyBtn = iconActionBtn('plus', 'Закупівля', ()=> startPurchaseFlow());
   actRow.appendChild(buyBtn);
+  if(canTransfer() && state.warehouses.length>1){
+    actRow.appendChild(iconActionBtn('transfer', 'Поставка', ()=>{ view='prepTransferLocations'; render(); }));
+    actRow.appendChild(iconActionBtn('transfer', 'Всі поставки', ()=>{ view='transferList'; render(); }));
+  }
   wrap.appendChild(actRow);
 
   wrap.appendChild(el(`
@@ -4132,7 +4197,7 @@ function stockView(){
           const transferBtn = el(`<button class="text-sm font-semibold" style="color:var(--accent)">⇄ Нова поставка</button>`);
           // Заготівельник спочатку обирає точку (бачить, чого там бракує), і вже звідти переходить
           // до самої форми поставки — власник (тут цієї кнопки й не буває) поза цим сценарієм.
-          transferBtn.onclick = ()=>{ view = (u && u.role==='prep') ? 'prepTransferLocations' : 'transferStart'; render(); };
+          transferBtn.onclick = ()=>{ view = 'prepTransferLocations'; render(); };
           actRow.appendChild(transferBtn);
           const ingBtn = el(`<button class="text-sm font-semibold" style="color:var(--accent)">Рецепти</button>`);
           ingBtn.onclick = ()=>{ view='ingredients'; render(); };
@@ -5268,11 +5333,13 @@ function transferStartView(){
     render();
   };
   wrap.appendChild(topBar);
-  wrap.appendChild(el(`<div class="sub text-xs mb-4">Переміщення готових інгредієнтів (соуси тощо) з одного складу на інший.</div>`));
+  wrap.appendChild(el(`<div class="sub text-xs mb-4">Переміщення готових інгредієнтів (соуси тощо) і продуктів з одного складу на інший.</div>`));
 
   let fromWhId = state.defaultWarehouseId || state.currentWarehouse;
-  let toWhId = (returnTo && viewingLocationId && state.warehouses.some(w=>w.id===viewingLocationId))
-    ? viewingLocationId
+  const viewedWh = (returnTo && viewingLocationId) ? warehouseForLocationOrNull(viewingLocationId) : null;
+  if(!isOwner()) fromWhId = state.currentWarehouse;
+  let toWhId = (viewedWh && viewedWh.id!==fromWhId)
+    ? viewedWh.id
     : (state.warehouses.find(w=>w.id!==fromWhId) || state.warehouses[0]).id;
 
   wrap.appendChild(el(`<div class="sub text-xs mb-1.5">Звідки</div>`));
@@ -5312,25 +5379,34 @@ function transferStartView(){
   function renderItems(){
     itemsHost.innerHTML = '';
     rowInputs = [];
-    const items = state.recipeIngredients.filter(i=>!i.warehouseId || i.warehouseId===fromWhId);
+    const items = transferCatalog(fromWhId);
     if(items.length===0){
-      itemsHost.appendChild(el(`<div class="sub text-xs mb-2">На цьому складі ще немає інгредієнтів</div>`));
+      itemsHost.appendChild(el(`<div class="sub text-xs mb-2">На цьому складі ще немає що відправляти</div>`));
       return;
     }
-    items.slice().sort((a,b)=>a.name.localeCompare(b.name,'uk')).forEach(ing=>{
-      const available = ingredientQtyAt(ing.id, fromWhId);
-      const atDest = ingredientQtyAt(ing.id, toWhId);
+    const fillBtn = el(`<button class="btn-line mb-3" style="padding:8px 14px;font-size:.8rem">Дозаповнити до мінімуму</button>`);
+    fillBtn.onclick = ()=>{
+      rowInputs.forEach(({c,input,available,atDest,min})=>{
+        const need = Number((min - atDest).toFixed(3));
+        if(min>0 && need>0) input.value = String(Math.min(need, available>0?available:need));
+      });
+    };
+    itemsHost.appendChild(fillBtn);
+    items.forEach(c=>{
+      const available = catalogQty(c, fromWhId);
+      const atDest = catalogQty(c, toWhId);
+      const min = catalogMin(c, toWhId);
       const row = el(`
         <div class="card p-3 mb-2 flex items-center justify-between gap-3">
           <div>
-            <div class="font-semibold">${escapeHtml(ing.name)}</div>
-            <div class="sub text-xs">На локації: ${fmt(atDest)} ${escapeHtml(ing.unit)} · Доступно на складі: ${fmt(available)} ${escapeHtml(ing.unit)}</div>
+            <div class="font-semibold">${escapeHtml(c.name)}</div>
+            <div class="sub text-xs">На точці: ${fmt(atDest)} ${escapeHtml(c.unit)}${min>0?' (мін '+fmt(min)+')':''} · Доступно: ${fmt(available)} ${escapeHtml(c.unit)}</div>
           </div>
           <input type="text" inputmode="decimal" placeholder="0" style="width:88px;text-align:right;border-radius:12px;background:var(--card3);color:var(--text);border:none;padding:10px 12px;font-weight:700">
         </div>
       `);
       const input = row.querySelector('input');
-      rowInputs.push({ ing, input, available });
+      rowInputs.push({ c, input, available, atDest, min });
       itemsHost.appendChild(row);
     });
   }
@@ -5341,19 +5417,19 @@ function transferStartView(){
   const saveBtn = el(`<button class="w-full btn-solid py-3">Відправити поставку</button>`);
   saveBtn.onclick = ()=>{
     if(fromWhId===toWhId){ err.textContent = 'Оберіть різні склади для «звідки» і «куди»'; return; }
-    const lines = rowInputs.map(({ing,input,available})=>({
-      ing, available,
+    const lines = rowInputs.map(({c,input,available})=>({
+      c, available,
       qty: parseFloat((input.value||'').replace(',','.')) || 0
     })).filter(l=>l.qty>0);
-    if(lines.length===0){ err.textContent = 'Вкажіть кількість хоча б для одного інгредієнта'; return; }
+    if(lines.length===0){ err.textContent = 'Вкажіть кількість хоча б для однієї позиції'; return; }
     const over = lines.find(l=>l.qty>l.available);
-    if(over && !allowNegativeStock()){ err.textContent = 'Недостатньо «'+over.ing.name+'» на складі-відправнику (є '+fmt(over.available)+' '+over.ing.unit+')'; return; }
+    if(over && !allowNegativeStock()){ err.textContent = 'Недостатньо «'+over.c.name+'» на складі-відправнику (є '+fmt(over.available)+' '+over.c.unit+')'; return; }
 
     const fromName = (state.warehouses.find(w=>w.id===fromWhId)||{}).name || '';
     const toName = (state.warehouses.find(w=>w.id===toWhId)||{}).name || '';
-    createTransfer(fromWhId, toWhId, lines.map(({ing,qty})=>({ ingredientId: ing.id, name: ing.name, unit: ing.unit, qty })));
+    createTransfer(fromWhId, toWhId, lines.map(({c,qty})=>({ kind:c.kind, ingredientId: c.ing?c.ing.id:null, stockName: c.name, name: c.name, unit: c.unit, qty })));
     transferReturnTo = null;
-    view = 'stock';
+    view = 'transferList';
     render();
     appAlert('Поставку відправлено: '+lines.length+' поз. ('+fromName+' → '+toName+'). Вона зʼявиться на складі-отримувачі як «В дорозі», поки її там не приймуть.');
   };
@@ -5371,7 +5447,7 @@ function transferListView(){
       <div class="font-bold" style="font-size:1.1rem">Поставки</div>
     </div>
   `);
-  topBar.querySelector('#tlBack').onclick = ()=>{ view = isOwner() ? 'settings' : 'stock'; render(); };
+  topBar.querySelector('#tlBack').onclick = ()=>{ view = isOwner() ? 'settings' : (curUser() && curUser().role==='prep' ? 'prepTransferLocations' : 'stock'); render(); };
   wrap.appendChild(topBar);
 
   const whName = id => (state.warehouses.find(w=>w.id===id)||{}).name || '';
@@ -5401,7 +5477,29 @@ function transferListView(){
         acceptBtn.onclick = ()=>{ editingTransferId = t.id; view = 'transferReceive'; render(); };
         card.appendChild(acceptBtn);
       }
-      if(isOwner()){
+      if(canCancelTransfer(t)){
+        const cancelBtn = el(`<button class="w-full btn-line py-2 mt-2" style="font-size:.8rem;color:var(--danger)">Скасувати поставку</button>`);
+        cancelBtn.onclick = ()=> appConfirm('Скасувати цю поставку? Товар повернеться на склад-відправник.', ()=> cancelTransfer(t.id));
+        card.appendChild(cancelBtn);
+      }
+      wrap.appendChild(card);
+    });
+  }
+
+  // Відправлені мною поставки, які ще їдуть (отримувач — не я): видно в дорозі й можна скасувати.
+  const outgoing = relevant.filter(t=>t.status==='SENT' && !isOwner() && !canReceiveAt(t.toWarehouseId));
+  if(outgoing.length>0){
+    wrap.appendChild(el(`<div class="font-semibold text-sm mb-2 mt-4">В дорозі (відправлено)</div>`));
+    outgoing.forEach(t=>{
+      const lines = t.lines.map(l=>escapeHtml(l.name)+' · '+fmt(l.sentQty)+' '+escapeHtml(l.unit)).join(', ');
+      const card = el(`
+        <div class="card p-3 mb-2">
+          <div class="font-semibold">${escapeHtml(whName(t.fromWarehouseId))} → ${escapeHtml(whName(t.toWarehouseId))}</div>
+          <div class="sub text-xs mt-0.5">${lines}</div>
+          <div class="sub text-xs mt-0.5">Відправлено: ${escapeHtml(t.createdAt)} · ${escapeHtml(t.createdBy)} · чекає підтвердження отримувача</div>
+        </div>
+      `);
+      if(canCancelTransfer(t)){
         const cancelBtn = el(`<button class="w-full btn-line py-2 mt-2" style="font-size:.8rem;color:var(--danger)">Скасувати поставку</button>`);
         cancelBtn.onclick = ()=> appConfirm('Скасувати цю поставку? Товар повернеться на склад-відправник.', ()=> cancelTransfer(t.id));
         card.appendChild(cancelBtn);
@@ -5482,7 +5580,7 @@ function transferReceiveView(){
   const confirmBtn = el(`<button class="w-full btn-solid py-3 mt-2">Підтвердити прийом</button>`);
   confirmBtn.onclick = ()=>{
     const received = rowInputs.map(({line,input})=>({
-      ingredientId: line.ingredientId,
+      key: lineKey(line),
       qty: parseFloat((input.value||'').replace(',','.')) || 0
     }));
     receiveTransfer(t.id, received);
