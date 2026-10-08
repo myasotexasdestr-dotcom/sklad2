@@ -76,7 +76,8 @@
   .hero-locs{border-top:1px solid rgba(47,65,114,.08); padding-top:8px;}
   .hero-loc{display:flex; align-items:center; gap:6px; font-size:.72rem; color:var(--sub); line-height:1.9;}
   .hero-loc .hl-name{max-width:64px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex-shrink:0;}
-  .hero-loc .hl-sum{color:var(--text); font-weight:600; white-space:nowrap;}
+  .hero-loc .hl-sum{color:var(--text); font-weight:600; white-space:nowrap; min-width:54px;}
+  .hero-loc .hl-pf{font-weight:700; white-space:nowrap; min-width:54px;}
   .hero-loc .hl-gap{flex:1; min-width:4px;}
   .hero-loc .hl-gv{display:flex; align-items:center; gap:5px; white-space:nowrap;}
   .hero-loc .hl-gv b{font-weight:700;}
@@ -468,7 +469,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.26';
+const APP_VERSION='2026-10-08.27';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2900,6 +2901,8 @@ function dashboardView(){
     return { loc, ff: day.metrics.turnoverByCategory.fastfood||0, meat: day.metrics.turnoverByCategory.meat||0,
              turnover: day.metrics.turnover, count: day.metrics.ordersCount,
              lp: locationProfit(loc.id, o=>o.dateKey===dateKey),
+             lpNg: locationProfit(loc.id, o=>o.dateKey===dateKey && o.source!=='glovo'),
+             turnoverNg: state.sales.filter(x=>x.locationId===loc.id && x.dateKey===dateKey && x.source!=='glovo').reduce((a,x)=>a+x.amount,0),
              gv: glovoDayStats(loc.id, dateKey) };
   });
   const totalTurn = perLoc.reduce((x,r)=>x+r.turnover,0);
@@ -2918,7 +2921,7 @@ function dashboardView(){
           <div style="font-weight:700;font-size:1.05rem;color:${totalProfit<0?'var(--danger)':'var(--accent2)'}">${totalProfit<0?'-':''}${fmt(Math.abs(totalProfit))} ₴</div>
         </div>
       </div>
-      <div class="hero-locs">${perLoc.map(r=>`<div class="hero-loc"><span class="hl-name">${escapeHtml(r.loc.name)}</span><span class="hl-sum">${fmt(r.turnover)}</span><button type="button" class="hero-chk" data-loc="${escapeHtml(r.loc.id)}">Чеки ›</button><span class="hl-gap"></span><span class="hl-gv">🛵 <b>${fmt(r.gv.net)}</b><b style="color:${r.gv.profit<0?'var(--danger)':'var(--accent2)'}">${fmt(r.gv.profit)}</b></span></div>`).join('')}</div>
+      <div class="hero-locs">${perLoc.map(r=>`<div class="hero-loc"><span class="hl-name">${escapeHtml(r.loc.name)}</span><span class="hl-sum">${fmt(r.turnoverNg)}</span><span class="hl-pf" style="color:${r.lpNg.profit<0?'var(--danger)':'var(--accent2)'}">${fmt(r.lpNg.profit)}</span><button type="button" class="hero-chk" data-loc="${escapeHtml(r.loc.id)}">Чеки ›</button><span class="hl-gap"></span><span class="hl-gv">🛵 <b>${fmt(r.gv.net)}</b><b style="color:${r.gv.profit<0?'var(--danger)':'var(--accent2)'}">${fmt(r.gv.profit)}</b></span></div>`).join('')}</div>
     </div>
   `);
   hero.querySelectorAll('.hero-chk').forEach(b=>{ b.onclick = (e)=>{ e.stopPropagation(); receiptsLocationId = b.getAttribute('data-loc'); view='receipts'; render(); }; });
