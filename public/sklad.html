@@ -3417,9 +3417,9 @@ function finalizeOrder(warehouseId, total){
 // За КОЖЕН відпрацьований день періоду (11-25 чи 26-10): база — якщо на точці того дня за Графіком
 // змін заплановано 2 людини, по 870 грн кожному; якщо 1 людина — 1200 грн. Бонус за м'ясо: 15 грн за
 // кожну продану того дня порцію (кожен на зміні отримує ПОВНУ суму, не ділиться між ними). Бонус за
-// фастфуд: денна виручка фастфуду ділиться на кількість людей на зміні того дня — і з цього середнього
-// нараховується денний бонус СХОДИНКАМИ по 500 грн: 5000→1000, 5500→1500, 6000→2000, 6500→2500,
-// 7000 і вище→3000 (максимум за день), нижче 5000 — бонусу немає. Всі денні суми за період складаються.
+// Бонус за фастфуд: денна каса фастфуду ділиться на кількість людей на зміні; береться СЕРЕДНЄ цих денних значень за весь
+// період (по відпрацьованих днях), і за цим середнім нараховується ОДИН бонус за період СХОДИНКАМИ по 500 грн:
+// 5000→1000, 5500→1500, 6000→2000, 6500→2500, 7000 і вище→3000, нижче 5000 — бонусу немає.
 function peopleScheduledAt(locationId, dateKey){
   return scheduleEntriesForDate(dateKey).filter(e=>e.locationId===locationId).length;
 }
@@ -3461,10 +3461,10 @@ function cashierSalaryForPeriod(staffId, periodKey){
     ffAvgSum += dayAvg;
     if(dateKey===todayKey) today = { people, fastfoodTotal: dayFastfoodTotal, fastfoodAvg: dayAvg, meatPortions: dayMeatPortions, meatBonus: dayMeatPortions*15 };
   });
-  // Бонус за фастфуд — від СЕРЕДНЬОЇ каси на людину за весь звітний період (а не по днях): середнє за відпрацьовані
-  // дні визначає сходинку, і ця денна ставка нараховується за кожен відпрацьований день. Новий період — лічильник з нуля.
+  // Бонус за фастфуд — ОДИН РАЗ за звітний період: середня каса на людину за відпрацьовані дні визначає сходинку
+  // (напр. відпрацював 6 днів, середня 6200 → 2000 грн за весь період). Новий період — лічильник з нуля.
   const avgPeriod = daysWorked ? ffAvgSum/daysWorked : 0;
-  fastfoodBonus = fastfoodBonusFor(avgPeriod) * daysWorked;
+  fastfoodBonus = daysWorked ? fastfoodBonusFor(avgPeriod) : 0;
 
   return {
     periodKey, daysWorked, basePay, meatPortions, meatBonus, fastfoodTotal, fastfoodBonus,
