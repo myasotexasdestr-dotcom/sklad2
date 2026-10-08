@@ -269,6 +269,10 @@ function runMigrations(){
   // налаштовуються власником у Налаштуваннях. Керують тим, які варіанти готового продукту
   // пропонуються при виборі конкретної сировини в «Новій готовці».
   if(!state.productionLinks) state.productionLinks = [];
+  // Норми автосписання розхідників: perOrder — на кожне замовлення (qty; glovoQty — окрема норма для Glovo), perShift — на зміну (при закритті зміни).
+  if(!state.supplyNorms) state.supplyNorms = { perOrder: [], perShift: [] };
+  if(!Array.isArray(state.supplyNorms.perOrder)) state.supplyNorms.perOrder = [];
+  if(!Array.isArray(state.supplyNorms.perShift)) state.supplyNorms.perShift = [];
   // Журнал заготовок (приготування інгредієнта з кількох продуктів зі списанням зі складу).
   if(!state.preparations) state.preparations = [];
   // Поставки between warehouses now go through a two-step handoff: SENT (stock already left the
@@ -476,7 +480,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.39';
+const APP_VERSION='2026-10-08.40';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2465,6 +2469,11 @@ function render(){
     navHost.appendChild(tabbar());
     return;
   }
+  if(view==='supplyNorms'){
+    app.appendChild(supplyNormsView());
+    navHost.appendChild(tabbar());
+    return;
+  }
   if(view==='productionLinks'){
     app.appendChild(productionLinksView());
     navHost.appendChild(tabbar());
@@ -2744,7 +2753,7 @@ function tabbar(){
       : (isPrep ? [['prepDashboard','dashboard'],['productionStart','flame'],['prepTransferLocations','transfer'],['myHistory','history']]
         : (isCashier ? [['stock','dashboard'],['purchase','purchase'],['scheduleCalendar','calendar'],['cashierRequest','transfer'],['myHistory','history']]
           : [['stock','stock'],['history','history']])));
-  let activeKey = (view==='payroll' || view==='menu' || view==='staffEdit' || view==='locationEdit' || view==='locationAdd' || view==='productAdd' || view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare' || view==='productionLinks' || view==='checkbox' || view==='glovo' || view==='glovoAdd' || view==='analytics' || view==='auditLog' || view==='shiftRatings' || view==='scheduleCalendar' || view==='scheduleDay' || view==='scheduleLocation' || view==='tasks' || view==='taskAdd') ? 'settings' : view;
+  let activeKey = (view==='payroll' || view==='menu' || view==='staffEdit' || view==='locationEdit' || view==='locationAdd' || view==='productAdd' || view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare' || view==='productionLinks' || view==='supplyNorms' || view==='checkbox' || view==='glovo' || view==='glovoAdd' || view==='analytics' || view==='auditLog' || view==='shiftRatings' || view==='scheduleCalendar' || view==='scheduleDay' || view==='scheduleLocation' || view==='tasks' || view==='taskAdd') ? 'settings' : view;
   if(view==='stockItemAdd' || view==='warehouseAdd' || view==='warehouseEdit' || view==='inventoryStart' || view==='inventoryDetail' || view==='writeOffStart' || view==='transferStart' || view==='transferReceive' || view==='productionStart' || view==='ingredientPrepare' || view==='productionDetail' || view==='prepTransferLocations' || view==='locationTransferNeeds') activeKey = isCook ? 'productionList' : 'stock';
   if(view==='shiftAccept' || view==='shiftClose' || view==='notifications' || view==='myRating') activeKey = homeView();
   if(!isOwner() && (view==='transferList')) activeKey = 'stock';
@@ -3475,6 +3484,7 @@ function finalizeOrder(warehouseId, total){
   state.orders.push(order);
   state.sales.push({ id: uid(), locationId: orderDraft.locationId, category: orderDraft.category, amount: total, ts: nowStr(), tsMs: Date.now(), dateKey: dateKeyFromOffset(0), who: u?u.name:'-' });
   applySaleConsumption(orderDraft.cart, warehouseId);
+  applyOrderNorms(warehouseId, false);
   saveState();
   showToast('Замовлення оформлено: '+fmtMoney(total), 'success');
   orderDraft = null;
@@ -3820,10 +3830,51 @@ function startPurchaseFlow(){
   }
   view = 'purchaseCreate'; render();
 }
+// ---- Автосписання розхідників за нормами ----
+const NORM_ORDER_REASON = 'Норма на замовлення';
+const NORM_SHIFT_REASON = 'Норма на зміну';
+function normRow(name, whId){ return stockRowByName(name, whId); }
+// Списує норми «на замовлення» зі складу точки. isGlovo → використовується glovoQty, якщо вона задана.
+function applyOrderNorms(whId, isGlovo){
+  ((state.supplyNorms||{}).perOrder||[]).forEach(n=>{
+    const q = (isGlovo && n.glovoQty!==undefined && n.glovoQty!==null && n.glovoQty!=='') ? Number(n.glovoQty) : Number(n.qty);
+    if(!(q>0)) return;
+    const it = normRow(n.name, whId);
+    if(it) recordStockChange(it, -q, NORM_ORDER_REASON);
+  });
+}
+// Повертає на склад норми, списані з замовлень oids (за історією, до її очищення). Без нових записів історії.
+function restoreOrderNorms(oids){
+  (state.history||[]).forEach(h=>{
+    if(h.reason===NORM_ORDER_REASON && oids.includes(h.orderRef)){
+      const it = state.stockItems.find(i=>i.id===h.stockItemId);
+      if(it) it.qty = Number((it.qty - h.delta).toFixed(3));
+    }
+  });
+  // Записи норм прибираємо з історії, щоб баланс історії лишався узгодженим із залишком.
+  state.history = (state.history||[]).filter(h=>!(h.reason===NORM_ORDER_REASON && oids.includes(h.orderRef)));
+}
+// Середня реальна витрата розхідника за останні закриття зміни: на зміну і на замовлення.
+function supplyUsageStats(name, whId){
+  const key = String(name||'').trim().toLowerCase();
+  const recs = (state.shiftClosings||[]).filter(c=>(!whId||c.warehouseId===whId)).slice(0,14);
+  let used=0, n=0, orders=0;
+  recs.forEach(c=>{
+    const l = (c.lines||[]).find(x=>String(x.name||'').trim().toLowerCase()===key && typeof x.used==='number');
+    if(!l) return;
+    used += l.used; n++;
+    orders += (state.orders||[]).filter(o=>o.locationId===c.locationId && o.dateKey===c.dateKey).length;
+  });
+  return n ? { shifts:n, perShift: used/n, perOrder: orders ? used/orders : null } : null;
+}
 // ---- Закриття зміни: касир вводить фактичні залишки розхідників складу своєї точки ----
 function todayShiftClosing(staffId){
   const dk = localDateKey(new Date());
   return (state.shiftClosings||[]).find(c=>c.staffId===staffId && c.dateKey===dk) || null;
+}
+function shiftNormFor(name){
+  const key = String(name||'').trim().toLowerCase();
+  return ((state.supplyNorms||{}).perShift||[]).filter(n=>String(n.name||'').trim().toLowerCase()===key).reduce((a,n)=>a+(Number(n.qty)||0),0);
 }
 function shiftCloseRows(whId){
   return state.stockItems.filter(i=>i.warehouseId===whId && stockSectionOf(i)==='supplies').sort((a,b)=>a.name.localeCompare(b.name,'uk'));
@@ -3832,13 +3883,34 @@ function shiftCloseRows(whId){
 function closeShift(whId, locationId, counts){
   const u = curUser(); if(!u) return null;
   const lines = [];
+  const dayStartMs = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
+  // Використання за день (до жодних корекцій закриття): початок + надходження − факт.
+  const usageBase = {};
+  shiftCloseRows(whId).forEach(it=>{
+    const day = (state.history||[]).filter(h=>h.stockItemId===it.id && (h.tsMs||0)>=dayStartMs);
+    const net = day.reduce((a,h)=>a+(Number(h.delta)||0),0);
+    const inflow = day.reduce((a,h)=>a+(h.delta>0?h.delta:0),0);
+    usageBase[it.id] = { start: it.qty-net, inflow };
+  });
+  // Норми «на зміну» — один раз на точку за день (якщо зміну на цій точці сьогодні ще не закривали).
+  const normsDone = (state.shiftClosings||[]).some(c=>c.locationId===locationId && c.dateKey===localDateKey(new Date()));
+  const shiftNorm = {};
+  if(!normsDone){
+    ((state.supplyNorms||{}).perShift||[]).forEach(n=>{
+      const q = Number(n.qty)||0; if(!(q>0)) return;
+      const it = normRow(n.name, whId);
+      if(it){ recordStockChange(it, -q, NORM_SHIFT_REASON); shiftNorm[it.id] = (shiftNorm[it.id]||0)+q; }
+    });
+  }
   shiftCloseRows(whId).forEach(it=>{
     if(!(it.id in counts)) return;
     const actual = Math.max(0, Number(counts[it.id])||0);
     const expected = it.qty;
     const diff = Number((actual-expected).toFixed(3));
+    const ub = usageBase[it.id] || { start: expected, inflow: 0 };
+    const used = Number((ub.start + ub.inflow - actual).toFixed(3));
     if(diff!==0) recordStockChange(it, diff, 'Закриття зміни');
-    lines.push({ stockItemId: it.id, name: it.name, unit: it.unit, expected, actual, diff });
+    lines.push({ stockItemId: it.id, name: it.name, unit: it.unit, expected, actual, diff, used, norm: shiftNorm[it.id]||0 });
   });
   const rec = { id: uid(), staffId: u.id, staffName: u.name, locationId, warehouseId: whId, dateKey: localDateKey(new Date()), ts: nowStr(), tsMs: Date.now(), lines };
   state.shiftClosings.unshift(rec);
@@ -3873,7 +3945,7 @@ function shiftCloseView(){
     return wrap;
   }
   const locName = (state.locations.find(l=>l.id===locId)||{}).name || '';
-  wrap.appendChild(el(`<div class="sub text-sm mb-4">${escapeHtml(locName)} · порахуйте, скільки розхідників залишилось фізично, і введіть кількість.</div>`));
+  wrap.appendChild(el(`<div class="sub text-sm mb-4">${escapeHtml(locName)} · порахуйте, скільки розхідників залишилось фізично, і введіть кількість. «Зараз» — вже з урахуванням автосписання за замовленнями; норма зміни спишеться при закритті.</div>`));
   const rows = shiftCloseRows(whId);
   const inputs = {};
   if(rows.length===0) wrap.appendChild(el(`<div class="sub text-sm mb-4">На складі точки немає розхідників — можна просто закрити зміну.</div>`));
@@ -3886,7 +3958,7 @@ function shiftCloseView(){
   rows.forEach(it=>{
     const row = el(`
       <div class="card p-3 mb-2 flex items-center gap-2">
-        <div class="flex-1" style="min-width:0"><div class="font-semibold text-sm">${escapeHtml(it.name)}</div><div class="sub text-xs">${escapeHtml(it.unit)}</div></div>
+        <div class="flex-1" style="min-width:0"><div class="font-semibold text-sm">${escapeHtml(it.name)}</div><div class="sub text-xs">${escapeHtml(it.unit)}${shiftNormFor(it.name)?` · норма зміни −${fmt(shiftNormFor(it.name))}`:''}</div></div>
         <div style="text-align:center;flex-shrink:0;min-width:46px"><div class="sub" style="font-size:.6rem;white-space:nowrap">початок</div><div class="font-bold text-sm">${fmt(startQty(it))}</div></div>
         <div style="text-align:center;flex-shrink:0;min-width:46px"><div class="sub" style="font-size:.6rem;white-space:nowrap">зараз</div><div class="font-bold text-sm">${fmt(it.qty)}</div></div>
         <input type="text" inputmode="decimal" placeholder="факт" class="py-3 px-3" style="width:70px;border-radius:14px;background:var(--card3);color:var(--text);border:none;text-align:right">
@@ -6179,6 +6251,72 @@ function productionListContent(){
 // Власник налаштовує тут, які готові продукти можна отримати з якої сировини (напр.
 // "М'ясо курка" -> "М'ясо курка BBQ"). Ці зв'язки керують списком варіантів у «Новій готовці» —
 // вибравши сировину, кухар/заготівельник бачить тільки пов'язані з нею продукти.
+function supplyNormsView(){
+  const wrap = el(`<div></div>`);
+  const topBar = el(`
+    <div class="flex items-center gap-3 mb-4">
+      <button id="snBack" class="navicon-btn" style="background:var(--card3)">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="font-bold" style="font-size:1.1rem">Норми розхідників</div>
+    </div>`);
+  topBar.querySelector('#snBack').onclick = ()=>{ view='settings'; render(); };
+  wrap.appendChild(topBar);
+  wrap.appendChild(el(`<div class="sub text-xs mb-4">Розхідники списуються автоматично: «на замовлення» — з кожним чеком (Checkbox, Glovo, ручні), «на зміну» — при закритті зміни касиром. Закриття зміни звіряє норму з фактом, а розбіжності потрапляють у журнал.</div>`));
+  const norms = state.supplyNorms;
+  const supplyNames = Array.from(new Set(state.stockItems.filter(i=>stockSectionOf(i)==='supplies').map(i=>i.name))).sort((a,b)=>a.localeCompare(b,'uk'));
+  const parse = (v)=> parseFloat(String(v||'').replace(',','.')) || 0;
+
+  function block(title, hint, list, withGlovo){
+    wrap.appendChild(el(`<div class="font-semibold text-sm mb-1">${title}</div>`));
+    wrap.appendChild(el(`<div class="sub text-xs mb-2">${hint}</div>`));
+    if(list.length===0) wrap.appendChild(el(`<div class="sub text-xs mb-3">Ще нічого не додано</div>`));
+    list.forEach(n=>{
+      const it = state.stockItems.find(i=>i.name.trim().toLowerCase()===n.name.trim().toLowerCase());
+      const unit = it ? it.unit : '';
+      const st = supplyUsageStats(n.name);
+      let tip = '';
+      if(st){
+        tip = 'Реально за '+st.shifts+' зм.: ~'+fmt(Number(st.perShift.toFixed(2)))+' '+unit+' на зміну'+(withGlovo && st.perOrder!==null ? ', ~'+fmt(Number(st.perOrder.toFixed(2)))+' на замовлення' : '');
+      }
+      const row = el(`
+        <div class="card p-3 mb-2">
+          <div class="flex items-center gap-2">
+            <div class="flex-1 font-semibold text-sm" style="min-width:0">${escapeHtml(n.name)} <span class="sub text-xs">${escapeHtml(unit)}</span></div>
+            <input data-q type="text" inputmode="decimal" placeholder="0" class="py-2 px-3" style="width:70px;border-radius:12px;background:var(--card3);color:var(--text);border:none;text-align:right">
+            ${withGlovo?`<input data-g type="text" inputmode="decimal" placeholder="Glovo" class="py-2 px-3" style="width:70px;border-radius:12px;background:var(--card3);color:var(--text);border:none;text-align:right">`:''}
+            <button data-del style="background:none;border:none;color:var(--danger);font-size:1.3rem;padding:0 4px;cursor:pointer">&times;</button>
+          </div>
+          ${tip?`<div class="sub text-xs mt-1.5">${escapeHtml(tip)}</div>`:''}
+        </div>`);
+      const q = row.querySelector('[data-q]'); q.value = n.qty ? fmt(n.qty) : '';
+      q.onchange = ()=>{ n.qty = parse(q.value); saveState(); };
+      if(withGlovo){ const g = row.querySelector('[data-g]'); g.value = (n.glovoQty!==undefined && n.glovoQty!==null && n.glovoQty!=='') ? fmt(n.glovoQty) : ''; g.onchange = ()=>{ n.glovoQty = g.value.trim()==='' ? null : parse(g.value); saveState(); }; }
+      row.querySelector('[data-del]').onclick = ()=>{ const i = list.indexOf(n); if(i>=0) list.splice(i,1); saveState(); render(); };
+      wrap.appendChild(row);
+    });
+    if(supplyNames.length){
+      const form = el(`<div class="card p-3 mb-5" style="background:var(--card3)"></div>`);
+      const host = el(`<div class="mb-2"></div>`); form.appendChild(host);
+      let pick = supplyNames[0];
+      host.appendChild(customSelect(supplyNames.map(n=>({value:n,label:n})), pick, (v)=>{ pick = v; }));
+      const qi = el(`<input type="text" inputmode="decimal" placeholder="Кількість" class="w-full py-3 px-3 mb-2" style="border-radius:14px;background:var(--card);color:var(--text);border:none">`);
+      form.appendChild(qi);
+      const add = el(`<button class="w-full btn-line py-2.5">+ Додати норму</button>`);
+      add.onclick = ()=>{
+        const q = parse(qi.value); if(!(q>0)) return;
+        const ex = list.find(x=>x.name.trim().toLowerCase()===pick.trim().toLowerCase());
+        if(ex) ex.qty = q; else list.push(withGlovo ? { id: uid(), name: pick, qty: q, glovoQty: null } : { id: uid(), name: pick, qty: q });
+        saveState(); render();
+      };
+      form.appendChild(add);
+      wrap.appendChild(form);
+    } else wrap.appendChild(el(`<div class="sub text-xs mb-5">Додайте на склад позиції в розділі «Розхідники» — і їх можна буде обрати тут.</div>`));
+  }
+  block('На кожне замовлення','Напр.: Пакет 1, Серветки 3. У колонці «Glovo» можна вказати іншу норму для доставки (порожньо = така ж).', norms.perOrder, true);
+  block('На зміну','Напр.: Дезінфектор 0,3 л, Губки 1. Списується один раз за день на точці — при закритті зміни.', norms.perShift, false);
+  return wrap;
+}
 function productionLinksView(){
   const wrap = el(`<div></div>`);
   const topBar = el(`
@@ -6990,6 +7128,7 @@ function reprocessCheckboxToday(){
       historyRefOverride = '__rev'; historyCapture = [];
       try{ applySaleConsumption(back, wh); } finally { historyRefOverride = null; historyCapture = null; }
     }
+    restoreOrderNorms(oids);
     state.history = state.history.filter(h=> h.orderRef!=='__rev' && !oids.includes(h.orderRef));
     state.orders = state.orders.filter(o=>!oids.includes(o.checkboxId));
     state.sales = state.sales.filter(x=>!oids.includes(x.checkboxId));
@@ -7036,7 +7175,7 @@ function recordSaleGroups(o){
   const made = [];
   historyWhoOverride = who;
   try{
-    catKeys.forEach(cat=>{
+    catKeys.forEach((cat, ci)=>{
       const items = groups[cat];
       const total = Number(items.reduce((s,l)=>s+l.price*l.qty,0).toFixed(2));
       const oid = catKeys.length>1 ? baseId+':'+cat : baseId;
@@ -7052,6 +7191,12 @@ function recordSaleGroups(o){
         historyRefOverride = oid; historyCapture = [];
         try{ applySaleConsumption(consCart, warehouseForLocation(locationId)); }
         finally{ ord.consumption = historyCapture; historyRefOverride = null; historyCapture = null; }
+      }
+      // Норми розхідників на замовлення — один раз на чек (за першою категорією), не для повернень.
+      if(ci===0 && total>0){
+        historyRefOverride = oid; historyCapture = [];
+        try{ applyOrderNorms(warehouseForLocation(locationId), source==='glovo'); }
+        finally{ ord.consumption = (ord.consumption||[]).concat(historyCapture); historyRefOverride = null; historyCapture = null; }
       }
       made.push(ord);
     });
@@ -7413,6 +7558,7 @@ function deleteGlovoOrder(order){
   const back = (order.items||[]).filter(l=>!l.unmapped).map(l=>({ ...l, qty: -l.qty }));
   historyWhoOverride = (curUser()||{}).name || null;
   try{ if(back.length) applySaleConsumption(back, warehouseForLocation(order.locationId)); } finally { historyWhoOverride = null; }
+  restoreOrderNorms([order.glovoId]);
   state.orders = state.orders.filter(o=>o.id!==order.id);
   state.sales = state.sales.filter(s=>s.glovoId!==order.glovoId);
   logEvent('glovo', 'Видалено продаж Glovo: '+fmtMoney(order.total));
@@ -7672,6 +7818,7 @@ function settingsView(){
     { label: 'Нова заготовка', icon: 'flame', action: ()=> openPrepare(null, 'settings') },
     { label: 'Нова готовка', icon: 'flame', action: ()=>{ view='productionStart'; render(); } },
     { label: 'Зв\'язки готовки', icon: 'link', action: ()=>{ view='productionLinks'; render(); } },
+    { label: 'Норми розхідників', icon: 'checklist', action: ()=>{ view='supplyNorms'; render(); } },
     { label: 'Аналітика', icon: 'dashboard', action: ()=>{ view='analytics'; render(); } },
     { label: 'Продажі Glovo', icon: 'truck', action: ()=>{ glovoTab='sales'; view='glovo'; render(); } },
     { label: 'Checkbox', icon: 'receipt', action: ()=>{ cbUi.cfg=null; view='checkbox'; render(); } },

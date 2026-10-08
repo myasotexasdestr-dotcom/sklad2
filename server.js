@@ -278,7 +278,7 @@ function stripManualSales(newData, oldData, role) {
 }
 // (піни й хеші не віддаються нікому — див. sanitizeOut)
 // Усе змінене не-власником у розділах, що належать власнику, ігнорується (на сервері, а не лише в інтерфейсі).
-const OWNER_ONLY_KEYS = ['staff', 'locations', 'shiftSchedule', 'productionLinks', 'allowNegativeStock', 'glovo'];
+const OWNER_ONLY_KEYS = ['staff', 'locations', 'shiftSchedule', 'productionLinks', 'allowNegativeStock', 'glovo', 'supplyNorms'];
 function protectOwnerData(newData, oldData, staffId) {
   const out = Object.assign({}, newData);
   OWNER_ONLY_KEYS.forEach(k => { if (oldData[k] === undefined) delete out[k]; else out[k] = oldData[k]; });
