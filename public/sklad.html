@@ -471,7 +471,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.31';
+const APP_VERSION='2026-10-08.32';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2557,6 +2557,11 @@ function render(){
     navHost.appendChild(tabbar());
     return;
   }
+  // Страховка від порожньої сторінки: якщо поточний екран не існує для ролі (напр. після оновлення сторінки view
+  // лишається 'dashboard', а касиру/заготівельнику він не належить) — відкриваємо головний екран цієї ролі.
+  { const known = isOwner() ? ['dashboard','purchase','stock','settings']
+      : ['stock','history','productionList','prepDashboard','myHistory','purchase','cashierRequest'];
+    if(!known.includes(view)) view = homeView(); }
   app.appendChild(header());
   if(isOwner()){
     if(view==='dashboard') app.appendChild(dashboardView());
@@ -8466,6 +8471,7 @@ async function boot(){
     saveLocalSession();
   } else {
     startPolling();
+    view = homeView(); // після оновлення сторінки — головний екран своєї ролі (дашборд / склад / заготовки), а не порожнє місце
   }
   stateLoaded = true;
   render();
