@@ -463,6 +463,7 @@ function loadingView(){
 }
 let view = 'dashboard';
 let stockSubview = 'stock';
+let stockSectionFilter = 'all';
 let stockCategoryFilter = 'all'; // 'all' | 'meat' | 'fastfood' — filters the stock list by department
 let dashboardOffset = 0; // 0 = today, up to 6 = 6 days ago
 let analyticsPeriod = 7; // days, for the Аналітика screen (1 / 7 / 30)
@@ -473,7 +474,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.34';
+const APP_VERSION='2026-10-08.35';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -875,7 +876,30 @@ function openStaffEdit(id){
 // current one, others start at 0 since each warehouse then tracks its own real count independently).
 // `min` is either a plain number (same minimum for every склад the product lands on) or an object
 // { [warehouseId]: number } to give each склад its own minimum (e.g. Лаваш: База 50, ЦУМ 15).
-function addStockItem(name, unit, qty, min, costPerUnit, everywhere, category){
+// Розділи складу: щоб у довгому переліку було легко орієнтуватись. Явно задане item.section має пріоритет;
+// для старих рядків розділ визначається автоматично (результат готовки → «Заготовки», товар меню → «Готові товари»).
+const STOCK_SECTIONS = [
+  { key:'raw',      label:'Сировина',      icon:'🥩' },
+  { key:'prep',     label:'Заготовки',     icon:'🔪' },
+  { key:'goods',    label:'Готові товари', icon:'🥤' },
+  { key:'supplies', label:'Розхідники',    icon:'📦' }
+];
+function stockSectionOf(item){
+  if(item.section && STOCK_SECTIONS.some(x=>x.key===item.section)) return item.section;
+  const key = String(item.name||'').trim().toLowerCase();
+  const sib = (state.stockItems||[]).find(r=>r.section && String(r.name||'').trim().toLowerCase()===key && STOCK_SECTIONS.some(x=>x.key===r.section));
+  if(sib) return sib.section; // той самий продукт на іншому складі вже віднесено до розділу
+  if((state.products||[]).some(x=>x.type==='product' && String(x.name||'').trim().toLowerCase()===key)) return 'goods';
+  const isOut = (n)=> String(n||'').trim().toLowerCase()===key;
+  if((state.productionLinks||[]).some(l=>isOut(l.outputName)) || (state.productions||[]).some(pr=>(pr.items||[]).some(it=>isOut(it.outputName)))) return 'prep';
+  return 'raw';
+}
+// Однаковий розділ для всіх рядків цього продукту на всіх складах (без save/render).
+function setProductSection(name, section){
+  if(!STOCK_SECTIONS.some(x=>x.key===section)) return;
+  stockRowsForProduct(name).forEach(r=>{ r.section = section; });
+}
+function addStockItem(name, unit, qty, min, costPerUnit, everywhere, category, section){
   category = category==='fastfood' ? 'fastfood' : 'meat';
   const minFor = (whId)=> (min && typeof min==='object') ? (Number(min[whId])||0) : (Number(min)||0);
   if(everywhere && state.warehouses.length>1){
@@ -892,6 +916,7 @@ function addStockItem(name, unit, qty, min, costPerUnit, everywhere, category){
       name, unit, category, qty: Number(qty)||0, min: category==='fastfood' ? minFor(state.currentWarehouse) : 0, costPerUnit: Number(costPerUnit)||0
     });
   }
+  if(section) setProductSection(name, section);
   saveState(); render();
 }
 // All stockItems rows that are the same product on different складах (same name, case/space-insensitive —
@@ -940,6 +965,7 @@ function updateStockItem(id, data){
   item.costPerUnit = Number(data.costPerUnit)||0;
   item.category = data.category==='fastfood' ? 'fastfood' : 'meat';
   item.min = item.category==='fastfood' ? (Number(data.min)||0) : 0; // у «М'ясо з Техасу» мінімуму немає
+  if(data.section) setProductSection(item.name, data.section);
   saveState(); render();
 }
 // warehouseId: null means available on every warehouse (default); a specific id restricts it to that one.
@@ -1159,7 +1185,7 @@ function finishProduction(productionId, weights){
     let outItem = state.stockItems.find(p=>p.warehouseId===whId && p.name.trim().toLowerCase()===it.outputName.trim().toLowerCase());
     if(!outItem){
       const outCost = outputWeight>0 ? ((it.inputCostPerUnit||0) * it.inputWeight) / outputWeight : 0;
-      outItem = { id: uid(), warehouseId: whId, name: menuProd ? menuProd.name : it.outputName, unit: it.inputUnit, qty: 0, min: 0, costPerUnit: outCost, category: menuProd ? (menuProd.category==='fastfood'?'fastfood':'meat') : (it.category||'meat') };
+      outItem = { id: uid(), warehouseId: whId, name: menuProd ? menuProd.name : it.outputName, unit: it.inputUnit, qty: 0, min: 0, costPerUnit: outCost, category: menuProd ? (menuProd.category==='fastfood'?'fastfood':'meat') : (it.category||'meat'), section: menuProd ? 'goods' : 'prep' };
       state.stockItems.push(outItem);
     }
     if(outputWeight>0) recordStockChange(outItem, outputWeight, 'Виробництво: готовий продукт');
@@ -1809,7 +1835,7 @@ function ensureProductStock(prod, warehouseIds, unit){
     if(!state.warehouses.some(w=>w.id===wid)) return;
     if(stockRowByName(prod.name, wid)) return;
     state.stockItems.push({ id: uid(), warehouseId: wid, name: prod.name, unit: unit||'шт', qty: 0, min: 0,
-      costPerUnit: Number(prod.costPrice)||0, category: prod.category==='fastfood' ? 'fastfood' : 'meat' });
+      costPerUnit: Number(prod.costPrice)||0, category: prod.category==='fastfood' ? 'fastfood' : 'meat', section: 'goods' });
   });
 }
 function addProduct(data){
@@ -4385,7 +4411,34 @@ function stockView(){
     wrap.appendChild(el(`<div class="sub text-center py-10">Поки немає продуктів на цій точці</div>`));
     return wrap;
   }
-  list.slice().sort((a,b)=>a.name.localeCompare(b.name,'uk')).forEach(item=>{
+  // Фільтр за розділами складу (з лічильниками) — показуємо лише розділи, де є позиції.
+  const counts = {}; list.forEach(i=>{ const k=stockSectionOf(i); counts[k]=(counts[k]||0)+1; });
+  if(stockSectionFilter!=='all' && !counts[stockSectionFilter]) stockSectionFilter='all';
+  if(Object.keys(counts).length>1 || stockSectionFilter!=='all'){
+    const chips = el(`<div class="flex gap-2 mb-3" style="overflow-x:auto;padding-bottom:2px"></div>`);
+    const mk = (key,label,n)=>{
+      const on = stockSectionFilter===key;
+      const b = el(`<button style="flex-shrink:0;white-space:nowrap;padding:7px 13px;border-radius:999px;border:none;font-size:.82rem;font-weight:600;background:${on?'var(--accent)':'var(--card3)'};color:${on?'#fff':'var(--text)'}">${escapeHtml(label)} <span style="opacity:.7">${n}</span></button>`);
+      b.onclick = ()=>{ stockSectionFilter = key; render(); };
+      chips.appendChild(b);
+    };
+    mk('all','Усі',list.length);
+    STOCK_SECTIONS.forEach(x=>{ if(counts[x.key]) mk(x.key, x.icon+' '+x.label, counts[x.key]); });
+    wrap.appendChild(chips);
+  }
+  const shown = stockSectionFilter==='all' ? list : list.filter(i=>stockSectionOf(i)===stockSectionFilter);
+  let lastSec = null;
+  shown.slice().sort((a,b)=>{
+    if(stockSectionFilter==='all'){
+      const d = STOCK_SECTIONS.findIndex(x=>x.key===stockSectionOf(a)) - STOCK_SECTIONS.findIndex(x=>x.key===stockSectionOf(b));
+      if(d) return d;
+    }
+    return a.name.localeCompare(b.name,'uk');
+  }).forEach(item=>{
+    if(stockSectionFilter==='all' && Object.keys(counts).length>1){
+      const sk = stockSectionOf(item);
+      if(sk!==lastSec){ lastSec = sk; const sd = STOCK_SECTIONS.find(x=>x.key===sk); wrap.appendChild(el(`<div class="sec-head"><div class="sec-title">${sd.icon} ${escapeHtml(sd.label)}</div></div>`)); }
+    }
     const isLow = itemIsLow(item);
     const minTxt = itemHasMin(item) ? ' · мін '+fmt(item.min)+' '+item.unit : '';
     const costLine = canSeeCost() ? `<div class="sub text-xs mt-0.5">${fmtMoneyPrecise(item.costPerUnit||0)} / ${escapeHtml(item.unit)}${escapeHtml(minTxt)}</div>` : (minTxt ? `<div class="sub text-xs mt-0.5">${escapeHtml(minTxt.replace(/^ · /,''))}</div>` : '');
@@ -4460,6 +4513,10 @@ function stockItemAddView(){
     (key)=>{ draftUnit = key; }
   );
   wrap.appendChild(unitRow);
+
+  wrap.appendChild(el(`<div class="sub text-xs mb-1.5">Розділ складу</div>`));
+  let draftSection = editing ? stockSectionOf(editing) : (stockSectionFilter!=='all' ? stockSectionFilter : 'raw');
+  wrap.appendChild(segmentedPicker(STOCK_SECTIONS.map(x=>[x.key,x.label,x.icon]), draftSection, (key)=>{ draftSection = key; }));
 
   const qtyField = field(editing ? 'Поточний залишок' : 'Початковий залишок', '0');
   const qtyInput = qtyField.querySelector('input');
@@ -4585,9 +4642,9 @@ function stockItemAddView(){
     const cost = parseFloat((costInput.value||'').replace(',','.')) || 0;
     if(editing){
       applyStockMins(otherMins);
-      updateStockItem(editing.id, { name, unit: draftUnit, qty, min, costPerUnit: cost, category: draftCategory });
+      updateStockItem(editing.id, { name, unit: draftUnit, qty, min, costPerUnit: cost, category: draftCategory, section: draftSection });
     } else {
-      addStockItem(name, draftUnit, qty, min, cost, availEverywhere, draftCategory);
+      addStockItem(name, draftUnit, qty, min, cost, availEverywhere, draftCategory, draftSection);
       if(createIngredientToo){
         addRecipeIngredient({
           name, unit: draftUnit, yieldAmount: 1,
