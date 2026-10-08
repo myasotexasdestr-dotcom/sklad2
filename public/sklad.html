@@ -331,10 +331,12 @@ function fixCheckboxConsumptionWarehouses(){
   state.orders.forEach(o=>{ const ref = o.checkboxId || o.glovoId; if(ref) byRef[ref] = o; });
   let moved = 0;
   state.history.forEach(h=>{
-    if(!h.orderRef || !(h.tsMs>=since && h.tsMs<until)) return;
-    const o = byRef[h.orderRef];
-    if(!o) return;
-    const target = warehouseForLocationOrNull(o.locationId);
+    if(!(h.tsMs>=since && h.tsMs<until)) return;
+    const o = h.orderRef ? byRef[h.orderRef] : null;
+    if(!o && !(h.reason==='Продаж' && h.who==='Checkbox')) return; // лише списання за чеками Checkbox / продажами Glovo
+    // Склад точки чека; якщо його не вдалося визначити — склад «ЦУМ» (за назвою).
+    const cumWh = (state.warehouses||[]).find(w=>norm(w.name).includes('цум'));
+    const target = (o && warehouseForLocationOrNull(o.locationId)) || cumWh || null;
     if(!target || target.id===h.warehouseId) return;
     if(h.warehouseId!==baseWarehouseId()) return; // чіпаємо лише помилкові списання з Бази
     const fromWh = h.warehouseId;
