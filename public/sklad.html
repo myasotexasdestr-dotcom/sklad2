@@ -476,7 +476,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.38';
+const APP_VERSION='2026-10-08.39';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -3877,12 +3877,19 @@ function shiftCloseView(){
   const rows = shiftCloseRows(whId);
   const inputs = {};
   if(rows.length===0) wrap.appendChild(el(`<div class="sub text-sm mb-4">На складі точки немає розхідників — можна просто закрити зміну.</div>`));
+  // Залишок на початок зміни = поточний мінус усі рухи за сьогодні (закупівлі, поставки, списання, продажі).
+  const dayStartMs = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
+  const startQty = (it)=>{
+    const moved = (state.history||[]).filter(h=>h.stockItemId===it.id && (h.tsMs||0)>=dayStartMs).reduce((a,h)=>a+(Number(h.delta)||0),0);
+    return Math.max(0, Number((it.qty-moved).toFixed(3)));
+  };
   rows.forEach(it=>{
     const row = el(`
-      <div class="card p-3 mb-2 flex items-center gap-3">
+      <div class="card p-3 mb-2 flex items-center gap-2">
         <div class="flex-1" style="min-width:0"><div class="font-semibold text-sm">${escapeHtml(it.name)}</div><div class="sub text-xs">${escapeHtml(it.unit)}</div></div>
-        <div style="text-align:right;flex-shrink:0"><div class="sub" style="font-size:.65rem">на складі</div><div class="font-bold text-sm">${fmt(it.qty)}</div></div>
-        <input type="text" inputmode="decimal" placeholder="факт" class="py-3 px-3" style="width:84px;border-radius:14px;background:var(--card3);color:var(--text);border:none;text-align:right">
+        <div style="text-align:center;flex-shrink:0;min-width:46px"><div class="sub" style="font-size:.6rem;white-space:nowrap">початок</div><div class="font-bold text-sm">${fmt(startQty(it))}</div></div>
+        <div style="text-align:center;flex-shrink:0;min-width:46px"><div class="sub" style="font-size:.6rem;white-space:nowrap">зараз</div><div class="font-bold text-sm">${fmt(it.qty)}</div></div>
+        <input type="text" inputmode="decimal" placeholder="факт" class="py-3 px-3" style="width:70px;border-radius:14px;background:var(--card3);color:var(--text);border:none;text-align:right">
       </div>`);
     inputs[it.id] = row.querySelector('input');
     wrap.appendChild(row);
