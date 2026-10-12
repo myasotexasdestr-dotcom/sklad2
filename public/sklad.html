@@ -271,6 +271,8 @@ function runMigrations(){
   if(!state.productionLinks) state.productionLinks = [];
   // Норми автосписання розхідників: perOrder — на кожне замовлення (qty; glovoQty — окрема норма для Glovo), perShift — на зміну (при закритті зміни).
   if(!state.supplyUsage) state.supplyUsage = [];
+  // Виправлення прийнятих поставок (помилка одиниць тощо): працівник надсилає, власник підтверджує — тоді коригується склад.
+  if(!state.transferCorrections) state.transferCorrections = [];
   if(!state.supplyNorms) state.supplyNorms = { perOrder: [], perShift: [] };
   if(!Array.isArray(state.supplyNorms.perOrder)) state.supplyNorms.perOrder = [];
   if(!Array.isArray(state.supplyNorms.perShift)) state.supplyNorms.perShift = [];
@@ -481,7 +483,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-08.41';
+const APP_VERSION='2026-10-12.1';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -1085,6 +1087,142 @@ function recordPurchase(whId, lines){
   saveState(); render();
 }
 
+// ---- Захист від помилок одиниць виміру (кг ↔ г): 2800 замість 2,8 ----
+// Повертає null або { level:'block'|'warn', suggest, msg }. block — не можна продовжити без виправлення (для власника лише warn).
+function qtyProblem(value, unit, ref){
+  const v = Number(value)||0; if(v<=0) return null;
+  const u = String(unit||'').trim().toLowerCase();
+  const heavy = (u==='кг' || u==='л');
+  const fmtS = (x)=> fmt(Number(x.toFixed(3)));
+  let level = null, suggest = null;
+  if(heavy){
+    const cand = v/1000;
+    if(v>=1000) level='block';
+    else if(ref>0 && v>=ref*20 && v>=10) level='block';
+    else if(v>=100) level='warn';
+    if(level){
+      // підказуємо переведення з грамів лише якщо результат правдоподібний
+      if(!(ref>0) || (cand>=ref/10 && cand<=ref*5)) suggest = cand;
+      if(suggest===null && v>=1000) suggest = cand;
+    }
+  } else {
+    if(ref>0 && v>=ref*20 && v>=50) level='block';
+    else if(v>=1000) level='warn';
+  }
+  if(!level) return null;
+  if(level==='block' && isOwner()) level = 'warn';
+  const msg = heavy
+    ? `${fmtS(v)} ${unit} — це дуже багато. Схоже, значення введено в грамах, а потрібно в ${unit}${suggest?` (тобто ${fmtS(suggest)} ${unit})`:''}.`
+    : `${fmtS(v)} ${unit} — підозріло багато. Перевірте, чи правильно введено кількість.`;
+  return { level, suggest, msg };
+}
+// Підключає до поля кількості живу перевірку: підпис одиниці, червона підказка з кнопками «виправити» / «так, правильно».
+// getUnit/getRef — функції (одиниця та еталонна кількість можуть змінюватись). Повертає { check(): bool } — чи можна продовжувати.
+function guardQty(input, getUnit, getRef, opts){
+  opts = opts || {};
+  const g = { confirmed:false };
+  const hint = el(`<div class="text-xs" style="display:none;flex-basis:100%;width:100%;margin-top:6px;padding:8px 10px;border-radius:10px;background:rgba(214,69,69,.10);color:var(--danger);line-height:1.35"></div>`);
+  const par = input.parentElement;
+  if(par){ par.style.flexWrap = 'wrap'; }
+  if(opts.showUnit){
+    const ul = el(`<span class="sub text-xs" style="min-width:18px"></span>`);
+    input.insertAdjacentElement('afterend', ul);
+    g.unitLabel = ul;
+    hint.__after = ul;
+  }
+  (hint.__after||input).insertAdjacentElement('afterend', hint);
+  const parseV = ()=> parseFloat(String(input.value||'').replace(',','.')) || 0;
+  function evaluate(){
+    const unit = getUnit(); if(g.unitLabel) g.unitLabel.textContent = unit||'';
+    const pr = qtyProblem(parseV(), unit, getRef ? getRef() : 0);
+    g.problem = pr;
+    if(!pr){ hint.style.display='none'; hint.innerHTML=''; return; }
+    hint.style.display = '';
+    hint.innerHTML = '';
+    hint.appendChild(el(`<div>⚠ ${escapeHtml(pr.msg)}${pr.level==='block'?' Таке значення не прийматиметься.':''}</div>`));
+    const row = el(`<div class="flex" style="flex-wrap:wrap;gap:8px;margin-top:8px"></div>`);
+    if(pr.suggest){
+      const fx = el(`<button type="button" class="btn-solid" style="padding:6px 12px;font-size:.78rem">Виправити на ${escapeHtml(fmt(Number(pr.suggest.toFixed(3))))} ${escapeHtml(getUnit())}</button>`);
+      fx.onclick = ()=>{ input.value = String(Number(pr.suggest.toFixed(3))).replace('.',','); g.confirmed=false; evaluate(); input.dispatchEvent(new Event('input')); };
+      row.appendChild(fx);
+    }
+    if(pr.level==='warn'){
+      const ok = el(`<button type="button" class="btn-line" style="padding:6px 12px;font-size:.78rem">${g.confirmed?'✓ Підтверджено':'Так, це правильно'}</button>`);
+      ok.onclick = ()=>{ g.confirmed = true; evaluate(); };
+      row.appendChild(ok);
+    }
+    hint.appendChild(row);
+  }
+  input.addEventListener('input', ()=>{ g.confirmed=false; evaluate(); });
+  g.refresh = evaluate;
+  g.check = ()=>{ evaluate(); const pr = g.problem; if(!pr) return true; if(pr.level==='block') return false; return g.confirmed; };
+  evaluate();
+  return g;
+}
+function guardsOk(list){ let ok = true; list.forEach(g=>{ if(g && !g.check()) ok = false; }); return ok; }
+
+// ---- Виправлення прийнятих поставок: працівник пропонує нові кількості → власник підтверджує → склад коригується ----
+function transferHasPendingCorrection(transferId){
+  return (state.transferCorrections||[]).some(c=>c.transferId===transferId && c.status==='PENDING');
+}
+function applyTransferCorrection(corr){
+  const t = state.transfers.find(x=>x.id===corr.transferId);
+  if(!t) return false;
+  corr.lines.forEach(cl=>{
+    const tl = t.lines.find(l=>lineKey(l)===cl.key);
+    if(!tl) return;
+    if(tl.origSentQty===undefined) tl.origSentQty = tl.sentQty;
+    if(tl.origReceivedQty===undefined) tl.origReceivedQty = tl.receivedQty;
+    const sentDelta = Number((cl.newSent - tl.sentQty).toFixed(3));
+    const recvDelta = Number((cl.newReceived - (tl.receivedQty||0)).toFixed(3));
+    // Відправник: більше відправлено → ще менше на складі (і навпаки); отримувач: різниця додається.
+    if(sentDelta!==0) transferLineChange(tl, t.fromWarehouseId, -sentDelta, 'Виправлення поставки (відправлено)');
+    if(recvDelta!==0) transferLineChange(tl, t.toWarehouseId, recvDelta, 'Виправлення поставки (прийнято)');
+    tl.sentQty = cl.newSent; tl.receivedQty = cl.newReceived; tl.corrected = true;
+  });
+  return true;
+}
+// newVals: [{key, sentQty, receivedQty}]. Власник застосовує одразу; решта — запит на підтвердження.
+function requestTransferCorrection(transferId, newVals, note){
+  const t = state.transfers.find(x=>x.id===transferId);
+  if(!t || t.status!=='RECEIVED') return null;
+  if(transferHasPendingCorrection(transferId)) return null;
+  const u = curUser();
+  const lines = [];
+  t.lines.forEach(l=>{
+    const nv = newVals.find(v=>v.key===lineKey(l)); if(!nv) return;
+    const ns = Number(nv.sentQty), nr = Number(nv.receivedQty);
+    if(isNaN(ns)||isNaN(nr)||ns<0||nr<0) return;
+    if(ns===l.sentQty && nr===l.receivedQty) return;
+    lines.push({ key: lineKey(l), name: l.name, unit: l.unit, oldSent: l.sentQty, oldReceived: l.receivedQty, newSent: ns, newReceived: nr });
+  });
+  if(!lines.length) return null;
+  const corr = { id: uid(), transferId, status:'PENDING', lines, note: note||'', requestedBy: u?u.name:'-', requestedAt: nowStr(), requestedMs: Date.now(), decidedBy:null, decidedAt:null };
+  const toName = (state.warehouses.find(w=>w.id===t.toWarehouseId)||{}).name || '';
+  if(isOwner()){
+    applyTransferCorrection(corr);
+    corr.status = 'APPROVED'; corr.decidedBy = u.name; corr.decidedAt = nowStr();
+    logEvent('transfer', `Виправлено поставку на «${toName}» (${lines.length} поз.) — власник`);
+  } else {
+    logEvent('transfer', `Запит на виправлення поставки на «${toName}» (${lines.length} поз.): ${lines.map(l=>`${l.name} ${fmt(l.oldReceived)}→${fmt(l.newReceived)} ${l.unit}`).join(', ')}`);
+  }
+  state.transferCorrections.unshift(corr);
+  if(state.transferCorrections.length>200) state.transferCorrections.pop();
+  saveState(); render();
+  return corr;
+}
+function decideTransferCorrection(corrId, approve){
+  if(!isOwner()) return;
+  const c = (state.transferCorrections||[]).find(x=>x.id===corrId);
+  if(!c || c.status!=='PENDING') return;
+  const u = curUser();
+  if(approve) applyTransferCorrection(c);
+  c.status = approve ? 'APPROVED' : 'REJECTED';
+  c.decidedBy = u?u.name:'-'; c.decidedAt = nowStr();
+  logEvent('transfer', `${approve?'Підтверджено':'Відхилено'} виправлення поставки (${c.lines.map(l=>l.name).join(', ')}), запит: ${c.requestedBy}`);
+  saveState(); render();
+}
+
 // ---- Поставка (two-step transfer: SENT — stock already left the sender, not yet credited to the
 // receiver — then RECEIVED once the receiver confirms actual quantity, logging any розбіжність). ----
 // lines: [{ingredientId, name, unit, qty}]
@@ -1451,6 +1589,7 @@ function cashierRequestView(){
   formCard.appendChild(el(`<div class="sub text-xs mb-1">Скільки потрібно</div>`));
   const qtyInput = el(`<input type="text" inputmode="decimal" class="w-full py-2.5 px-3 mb-2" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid rgba(47,65,114,.25)" placeholder="0">`);
   formCard.appendChild(qtyInput);
+  const purchaseGuard = guardQty(qtyInput, ()=>((catalog[selectedIdx]||{}).unit||''), ()=>0, { showUnit:false });
 
   const formErr = el(`<div class="text-sm mb-2" style="color:var(--danger);min-height:1.2em"></div>`);
   formCard.appendChild(formErr);
@@ -1459,6 +1598,7 @@ function cashierRequestView(){
   addItemBtn.onclick = ()=>{
     const qty = parseFloat((qtyInput.value||'').replace(',','.')) || 0;
     if(qty<=0){ formErr.textContent = 'Вкажіть кількість більше нуля'; return; }
+    if(!purchaseGuard.check()){ formErr.textContent = 'Перевірте кількість: схоже на помилку одиниць (кг/г).'; return; }
     const ing = items.find(i=>i.id===selectedId);
     formErr.textContent = '';
     const existing = draftItems.find(x=>x.ingredientId===ing.id);
@@ -1843,6 +1983,17 @@ function computeNotifications(){
       });
     }
   });
+  // 4) Виправлення поставок, що чекають підтвердження власника.
+  if(isOwner()){
+    (state.transferCorrections||[]).filter(c=>c.status==='PENDING').forEach(c=>{
+      list.push({
+        id: 'tcorr-'+c.id, severity: 'danger',
+        title: 'Виправлення поставки чекає підтвердження',
+        subtitle: `${c.requestedBy}: ${c.lines.map(l=>`${l.name} ${fmt(l.oldReceived)}→${fmt(l.newReceived)} ${l.unit}`).join(', ')}`,
+        action: ()=>{ view='transferList'; render(); }
+      });
+    });
+  }
   return list.filter(n=>!state.dismissedNotifications.includes(n.id));
 }
 function dismissNotification(id){
@@ -2640,6 +2791,11 @@ function render(){
     navHost.appendChild(tabbar());
     return;
   }
+  if(view==='transferCorrect'){
+    app.appendChild(transferCorrectView());
+    navHost.appendChild(tabbar());
+    return;
+  }
   if(view==='transferReceive'){
     app.appendChild(transferReceiveView());
     navHost.appendChild(tabbar());
@@ -2780,7 +2936,7 @@ function tabbar(){
         : (isCashier ? [['stock','dashboard'],['purchase','purchase'],['scheduleCalendar','calendar'],['cashierRequest','transfer'],['myHistory','history']]
           : [['stock','stock'],['history','history']])));
   let activeKey = (view==='payroll' || view==='menu' || view==='staffEdit' || view==='locationEdit' || view==='locationAdd' || view==='productAdd' || view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare' || view==='productionLinks' || view==='supplyNorms' || view==='checkbox' || view==='glovo' || view==='glovoAdd' || view==='analytics' || view==='auditLog' || view==='shiftRatings' || view==='scheduleCalendar' || view==='scheduleDay' || view==='scheduleLocation' || view==='tasks' || view==='taskAdd') ? 'settings' : view;
-  if(view==='stockItemAdd' || view==='warehouseAdd' || view==='warehouseEdit' || view==='inventoryStart' || view==='inventoryDetail' || view==='writeOffStart' || view==='transferStart' || view==='transferReceive' || view==='productionStart' || view==='ingredientPrepare' || view==='productionDetail' || view==='prepTransferLocations' || view==='locationTransferNeeds') activeKey = isCook ? 'productionList' : 'stock';
+  if(view==='stockItemAdd' || view==='warehouseAdd' || view==='warehouseEdit' || view==='inventoryStart' || view==='inventoryDetail' || view==='writeOffStart' || view==='transferStart' || view==='transferReceive' || view==='transferCorrect' || view==='productionStart' || view==='ingredientPrepare' || view==='productionDetail' || view==='prepTransferLocations' || view==='locationTransferNeeds') activeKey = isCook ? 'productionList' : 'stock';
   if(view==='shiftAccept' || view==='shiftClose' || view==='notifications' || view==='myRating') activeKey = homeView();
   if(!isOwner() && (view==='transferList')) activeKey = 'stock';
   if(!isOwner() && (view==='ingredients' || view==='ingredientAdd' || view==='ingredientPrepare')) activeKey = 'stock';
@@ -2795,7 +2951,7 @@ function tabbar(){
     else if(view==='prepDashboard') activeKey = 'prepDashboard';
   }
   // У власника «Поставки» тепер живуть у Налаштуваннях, а «Нова готовка» — теж там.
-  if(isOwner() && (view==='transferList' || view==='transferReceive')) activeKey = 'settings';
+  if(isOwner() && (view==='transferList' || view==='transferReceive' || view==='transferCorrect')) activeKey = 'settings';
   if(isOwner() && (view==='productionStart' || view==='productionDetail')) activeKey = 'settings';
   if(view==='locationStock' || view==='receipts') activeKey = 'dashboard';
   if(!isOwner() && (view==='glovo' || view==='glovoAdd')) activeKey = 'stock';
@@ -4162,7 +4318,7 @@ function purchaseCreateView(){
   const candSelect = customSelect(
     catalog.map((c,i)=>({value:String(i), label: c.name + (c.kind==='ingredient' ? ' · інгредієнт' : '')})),
     '0',
-    (val)=>{ selectedIdx = Number(val); }
+    (val)=>{ selectedIdx = Number(val); if(typeof purchaseGuard!=='undefined') purchaseGuard.refresh(); }
   );
   candSelectHost.appendChild(candSelect);
 
@@ -4987,7 +5143,7 @@ function writeOffStartView(){
   const itemSel = customSelect(
     combined.map(i=>({value:i.kind+':'+i.id, label:`${i.name} (${fmt(i.qty)} ${i.unit})`})),
     null,
-    (val)=>{ const [k,id] = val.split(':'); selKind = k; selId = id; }
+    (val)=>{ const [k,id] = val.split(':'); selKind = k; selId = id; if(typeof woGuard!=='undefined') woGuard.refresh(); }
   );
   itemWrap.appendChild(itemSel);
   wrap.appendChild(itemWrap);
@@ -4996,6 +5152,8 @@ function writeOffStartView(){
   wrap.appendChild(el(`<div class="sub text-xs mb-1.5">Кількість</div>`));
   const qtyInput = el(`<input type="text" inputmode="decimal" placeholder="0" class="w-full mb-3" style="border-radius:12px;background:var(--card3);color:var(--text);border:none;padding:12px 14px;font-weight:700">`);
   wrap.appendChild(qtyInput);
+  const woSel = ()=> combined.find(i=>i.kind===selKind && i.id===selId) || {};
+  const woGuard = guardQty(qtyInput, ()=>woSel().unit||'', ()=>woSel().qty||0, {});
 
   wrap.appendChild(el(`<div class="sub text-xs mb-1.5">Причина</div>`));
   const reasonWrap = el(`<div class="mb-3"></div>`);
@@ -5019,6 +5177,7 @@ function writeOffStartView(){
     const qty = parseFloat((qtyInput.value||'').replace(',','.')) || 0;
     if(!selId){ err.textContent = 'Оберіть позицію'; return; }
     if(qty<=0){ err.textContent = 'Вкажіть кількість більше нуля'; return; }
+    if(!woGuard.check()){ err.textContent = 'Перевірте кількість: схоже на помилку одиниць (кг/г).'; return; }
     saveWriteOff(selKind, selId, qty, reason, (commentInput.value||'').trim());
   };
   wrap.appendChild(saveBtn);
@@ -5867,7 +6026,9 @@ function transferStartView(){
         </div>
       `);
       const input = row.querySelector('input');
-      rowInputs.push({ c, input, available, atDest, min });
+      itemsHost.appendChild(row);
+      const guard = guardQty(input, ()=>c.unit, ()=>available, { showUnit:true });
+      rowInputs.push({ c, input, available, atDest, min, guard });
       itemsHost.appendChild(row);
     });
   }
@@ -5878,6 +6039,7 @@ function transferStartView(){
   const saveBtn = el(`<button class="w-full btn-solid py-3">Відправити поставку</button>`);
   saveBtn.onclick = ()=>{
     if(fromWhId===toWhId){ err.textContent = 'Оберіть різні склади для «звідки» і «куди»'; return; }
+    if(!guardsOk(rowInputs.map(r=>r.guard))){ err.textContent = 'Перевірте кількість: схоже на помилку одиниць (кг/г). Виправте червоні поля.'; return; }
     const lines = rowInputs.map(({c,input,available})=>({
       c, available,
       qty: parseFloat((input.value||'').replace(',','.')) || 0
@@ -5918,6 +6080,34 @@ function transferListView(){
   const relevant = isOwner()
     ? state.transfers
     : state.transfers.filter(t=>t.fromWarehouseId===state.currentWarehouse || t.toWarehouseId===state.currentWarehouse);
+
+  // Власнику — виправлення, які чекають підтвердження (стара → нова кількість).
+  if(isOwner()){
+    const pc = (state.transferCorrections||[]).filter(c=>c.status==='PENDING');
+    if(pc.length){
+      wrap.appendChild(el(`<div class="font-semibold text-sm mb-2" style="color:var(--danger)">Виправлення на підтвердження</div>`));
+      pc.forEach(c=>{
+        const t = state.transfers.find(x=>x.id===c.transferId);
+        const card = el(`<div class="card p-3 mb-2" style="border:1px solid rgba(214,69,69,.35)"></div>`);
+        card.appendChild(el(`<div class="font-semibold">${t?escapeHtml(whName(t.fromWarehouseId))+' → '+escapeHtml(whName(t.toWarehouseId)):'Поставка'}</div>`));
+        c.lines.forEach(l=>{
+          const parts = [];
+          if(l.oldSent!==l.newSent) parts.push('відправлено '+fmt(l.oldSent)+' → <b>'+fmt(l.newSent)+'</b>');
+          if(l.oldReceived!==l.newReceived) parts.push('прийнято '+fmt(l.oldReceived)+' → <b>'+fmt(l.newReceived)+'</b>');
+          card.appendChild(el(`<div class="text-sm mt-1">${escapeHtml(l.name)} (${escapeHtml(l.unit)}): ${parts.join(', ')}</div>`));
+        });
+        if(c.note) card.appendChild(el(`<div class="sub text-xs mt-1">Причина: ${escapeHtml(c.note)}</div>`));
+        card.appendChild(el(`<div class="sub text-xs mt-1">${escapeHtml(c.requestedBy)} · ${escapeHtml(c.requestedAt)} · склад змінюється лише після підтвердження</div>`));
+        const row = el(`<div class="flex gap-2 mt-2"></div>`);
+        const no = el(`<button class="btn-line flex-1 py-2" style="font-size:.85rem;color:var(--danger)">Відхилити</button>`);
+        const yes = el(`<button class="btn-solid flex-1 py-2" style="font-size:.85rem">Підтвердити</button>`);
+        no.onclick = ()=> appConfirm('Відхилити виправлення? Склад не зміниться.', ()=> decideTransferCorrection(c.id, false));
+        yes.onclick = ()=> appConfirm('Підтвердити виправлення? Склад буде скориговано на різницю.', ()=> decideTransferCorrection(c.id, true));
+        row.appendChild(no); row.appendChild(yes); card.appendChild(row);
+        wrap.appendChild(card);
+      });
+    }
+  }
 
   const pending = relevant.filter(t=>t.status==='SENT' && (isOwner() || canReceiveAt(t.toWarehouseId)));
   wrap.appendChild(el(`<div class="font-semibold text-sm mb-2">Очікують прийому</div>`));
@@ -5983,7 +6173,9 @@ function transferListView(){
         const diffLabel = diff!==0 ? ' <span style="color:var(--danger)">('+(diff>0?'+':'')+fmt(diff)+')</span>' : '';
         return escapeHtml(l.name)+' · '+fmt(l.sentQty)+' '+escapeHtml(l.unit)+diffLabel;
       }).join(', ');
-      wrap.appendChild(el(`
+      const pendingCorr = transferHasPendingCorrection(t.id);
+      const wasCorrected = t.lines.some(l=>l.corrected);
+      const hCard = el(`
         <div class="card p-3 mb-2">
           <div class="flex items-center justify-between">
             <div class="font-semibold">${escapeHtml(whName(t.fromWarehouseId))} → ${escapeHtml(whName(t.toWarehouseId))}</div>
@@ -5991,8 +6183,16 @@ function transferListView(){
           </div>
           <div class="sub text-xs mt-0.5">${lines}</div>
           <div class="sub text-xs mt-0.5">${escapeHtml(t.createdAt)} · ${escapeHtml(t.createdBy)}${t.receivedAt?' → '+escapeHtml(t.receivedAt)+' · '+escapeHtml(t.receivedBy):''}</div>
+          ${pendingCorr?'<div class="text-xs font-semibold mt-1" style="color:var(--danger)">Виправлення чекає підтвердження власника</div>':''}
+          ${wasCorrected?'<div class="sub text-xs mt-1">✎ кількість виправлено</div>':''}
         </div>
-      `));
+      `);
+      if(t.status==='RECEIVED' && !pendingCorr){
+        const fixBtn = el(`<button class="w-full btn-line py-2 mt-2" style="font-size:.8rem">${isOwner()?'Виправити кількість':'Помилилися в кількості? Виправити'}</button>`);
+        fixBtn.onclick = ()=>{ editingTransferId = t.id; view = 'transferCorrect'; render(); };
+        hCard.appendChild(fixBtn);
+      }
+      wrap.appendChild(hCard);
     });
   }
   return wrap;
@@ -6034,12 +6234,16 @@ function transferReceiveView(){
     `);
     const input = row.querySelector('input');
     input.value = fmt(line.sentQty);
-    rowInputs.push({ line, input });
     wrap.appendChild(row);
+    const guard = guardQty(input, ()=>line.unit, ()=>line.sentQty, { showUnit:true });
+    rowInputs.push({ line, input, guard });
   });
 
+  const recvErr = el(`<div class="text-sm mt-2" style="color:var(--danger);min-height:1.2em"></div>`);
+  wrap.appendChild(recvErr);
   const confirmBtn = el(`<button class="w-full btn-solid py-3 mt-2">Підтвердити прийом</button>`);
   confirmBtn.onclick = ()=>{
+    if(!guardsOk(rowInputs.map(r=>r.guard))){ recvErr.textContent = 'Перевірте кількість: схоже на помилку одиниць (кг/г). Виправте червоні поля.'; return; }
     const received = rowInputs.map(({line,input})=>({
       key: lineKey(line),
       qty: parseFloat((input.value||'').replace(',','.')) || 0
@@ -6052,6 +6256,61 @@ function transferReceiveView(){
     appAlert(anyDiff ? 'Поставку прийнято з розбіжністю — власник побачить це в історії.' : 'Поставку прийнято повністю.');
   };
   wrap.appendChild(confirmBtn);
+  return wrap;
+}
+
+function transferCorrectView(){
+  const t = state.transfers.find(x=>x.id===editingTransferId);
+  const wrap = el(`<div></div>`);
+  if(!t || t.status!=='RECEIVED'){ view='transferList'; setTimeout(render,0); return wrap; }
+  const whName = id => (state.warehouses.find(w=>w.id===id)||{}).name || '';
+  const topBar = el(`
+    <div class="flex items-center gap-3 mb-4">
+      <button id="tcBack" class="navicon-btn" style="background:var(--card3)">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="font-bold" style="font-size:1.1rem">Виправлення поставки</div>
+    </div>`);
+  topBar.querySelector('#tcBack').onclick = ()=>{ editingTransferId=null; view='transferList'; render(); };
+  wrap.appendChild(topBar);
+  wrap.appendChild(el(`<div class="sub text-sm mb-2">${escapeHtml(whName(t.fromWarehouseId))} → ${escapeHtml(whName(t.toWarehouseId))} · прийнято ${escapeHtml(t.receivedAt||'')}</div>`));
+  wrap.appendChild(el(`<div class="sub text-xs mb-4">${isOwner()
+    ? 'Нові кількості застосуються одразу: склади будуть скориговані на різницю.'
+    : 'Вкажіть правильні кількості (наприклад, у кг, а не в грамах). Виправлення піде на підтвердження власнику — склад зміниться лише після його підтвердження.'}</div>`));
+  const rows = [];
+  t.lines.forEach(line=>{
+    const card = el(`<div class="card p-3 mb-2"></div>`);
+    card.appendChild(el(`<div class="font-semibold mb-2">${escapeHtml(line.name)} <span class="sub text-xs">${escapeHtml(line.unit)}</span></div>`));
+    const mk = (label, val)=>{
+      const r = el(`<div class="flex items-center gap-2 mb-1" style="flex-wrap:wrap"><div class="flex-1 sub text-xs">${label}</div><input type="text" inputmode="decimal" style="width:96px;text-align:right;border-radius:12px;background:var(--card3);color:var(--text);border:none;padding:9px 12px;font-weight:700"></div>`);
+      const inp = r.querySelector('input'); inp.value = fmt(val);
+      card.appendChild(r);
+      const g = guardQty(inp, ()=>line.unit, ()=>0, { showUnit:true });
+      return { inp, g };
+    };
+    const sent = mk('Відправлено', line.sentQty);
+    const recv = mk('Прийнято', line.receivedQty||0);
+    rows.push({ line, sent, recv });
+    wrap.appendChild(card);
+  });
+  wrap.appendChild(el(`<div class="sub text-xs mb-1.5 mt-2">Причина (необов'язково)</div>`));
+  const note = el(`<textarea class="w-full mb-3" rows="2" style="border-radius:12px;background:var(--card3);color:var(--text);border:none;padding:12px 14px;resize:none" placeholder="Напр.: ввели в грамах"></textarea>`);
+  wrap.appendChild(note);
+  const err = el(`<div class="text-sm mb-2" style="color:var(--danger);min-height:1.2em"></div>`);
+  wrap.appendChild(err);
+  const parse = v=> parseFloat(String(v||'').replace(',','.')) || 0;
+  const btn = el(`<button class="w-full btn-solid py-3">${isOwner()?'Виправити':'Надіслати на підтвердження'}</button>`);
+  btn.onclick = ()=>{
+    if(!guardsOk(rows.flatMap(r=>[r.sent.g, r.recv.g]))){ err.textContent = 'Перевірте кількість: схоже на помилку одиниць (кг/г). Виправте червоні поля.'; return; }
+    const vals = rows.map(r=>({ key: lineKey(r.line), sentQty: parse(r.sent.inp.value), receivedQty: parse(r.recv.inp.value) }));
+    const changed = rows.some((r,i)=> vals[i].sentQty!==r.line.sentQty || vals[i].receivedQty!==(r.line.receivedQty||0));
+    if(!changed){ err.textContent = 'Нічого не змінено'; return; }
+    const corr = requestTransferCorrection(t.id, vals, note.value.trim());
+    if(!corr){ err.textContent = 'Не вдалося створити виправлення (можливо, вже є одне на підтвердженні)'; return; }
+    editingTransferId = null; view='transferList'; render();
+    appAlert(corr.status==='APPROVED' ? 'Виправлено: склади скориговано.' : 'Виправлення надіслано власнику. Склад зміниться після його підтвердження.');
+  };
+  wrap.appendChild(btn);
   return wrap;
 }
 
@@ -6160,6 +6419,7 @@ function productionStartView(){
   const takenField = miniField('Взято', '0');
   const takenInput = takenField.querySelector('input');
   formCard.appendChild(takenField);
+  const takenGuard = guardQty(takenInput, ()=>selectedInput?selectedInput.unit:'', ()=>selectedInput?selectedInput.qty:0, {});
 
   // Втрати при обробці — toggle
   let hasLoss = false;
@@ -6234,6 +6494,7 @@ function productionStartView(){
   addItemBtn.onclick = ()=>{
     const taken = parseFloat((takenInput.value||'').replace(',','.')) || 0;
     if(taken<=0){ formErr.textContent = 'Вкажіть скільки взято'; return; }
+    if(!takenGuard.check()){ formErr.textContent = 'Перевірте кількість: схоже на помилку одиниць (кг/г).'; return; }
     if(taken>selectedInput.qty && !allowNegativeStock()){ formErr.textContent = 'Недостатньо «'+selectedInput.name+'» на складі (доступно '+fmt(selectedInput.qty)+' '+selectedInput.unit+')'; return; }
     const loss = hasLoss ? (parseFloat((lossInput.value||'').replace(',','.')) || 0) : 0;
     if(loss<0 || loss>taken){ formErr.textContent = 'Втрати не можуть перевищувати взяту кількість'; return; }
@@ -6534,6 +6795,7 @@ function productionInProcessView(p, wrap, topBar){
       const input = el(`<input type="text" inputmode="decimal" class="w-full py-3 px-3 mb-4" style="border-radius:14px;background:var(--card3);color:var(--text);border:none" placeholder="0">`);
       if(weights[it.id]!==undefined) input.value = fmt(weights[it.id]);
       card.appendChild(input);
+      const wGuard = guardQty(input, ()=>it.inputUnit, ()=>it.netWeight, {});
       const modalErr = el(`<div class="text-sm mb-2" style="color:var(--danger);min-height:1.2em"></div>`);
       card.appendChild(modalErr);
       const row = el(`<div class="flex gap-2"></div>`);
@@ -6543,6 +6805,7 @@ function productionInProcessView(p, wrap, topBar){
       okBtn.onclick = ()=>{
         const val = parseFloat((input.value||'').replace(',','.')) || 0;
         if(val<=0){ modalErr.textContent = 'Вкажіть вагу більше нуля'; return; }
+        if(!wGuard.check()){ modalErr.textContent = 'Перевірте вагу: схоже на помилку одиниць (кг/г).'; return; }
         weights[it.id] = val;
         valueLabel.textContent = 'Отримано: ' + fmt(val) + ' ' + it.inputUnit;
         valueLabel.style.color = 'var(--accent2)';
