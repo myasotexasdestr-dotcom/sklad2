@@ -16,7 +16,7 @@ const { chromium } = require('playwright'); const fs=require('fs');
   check('migration zeroed meat min, fastfood kept', await p.evaluate(()=>state.stockItems.find(i=>i.id==='m1').min===0 && state.stockItems.find(i=>i.id==='f1').min===10));
   check('meat never low; fastfood low', await p.evaluate(()=>!itemIsLow(state.stockItems[0]) && itemIsLow(state.stockItems[1])));
   check('lowStockFor only fastfood', await p.evaluate(()=>{const l=lowStockFor('wBase');return l.length===1&&l[0].id==='f1'}));
-  check('notifications: only fastfood low', await p.evaluate(()=>computeNotifications().filter(n=>n.id.startsWith('lowstock-')).map(n=>n.id).join()==='lowstock-f1'));
+  check('notifications: one grouped low-stock alert, only fastfood', await p.evaluate(()=>{const l=computeNotifications().filter(n=>n.id.startsWith('lowstock-'));return l.length===1 && l[0].id.endsWith('-f1') && l[0].title.includes('1 поз.');}));
   await p.evaluate(()=>{ state.currentWarehouse='wBase'; view='stock'; stockSubview='stock'; render(); }); await p.waitForTimeout(300);
   const t=await p.evaluate(()=>document.body.innerText);
   check('stock list: meat row has no "мін"/"мало", fastfood has', /Курка[\s\S]{0,60}1 кг(?![\s\S]{0,12}мало)/.test(t) && t.includes('Лаваш'));

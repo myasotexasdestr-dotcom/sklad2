@@ -495,7 +495,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-15.1';
+const APP_VERSION='2026-10-15.2';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -2028,16 +2028,23 @@ function dateKeyFromTs(ts){
 const SHRINKAGE_ALERT_THRESHOLD = 15; // %
 function computeNotifications(){
   const list = [];
-  // 1) Low stock, across every warehouse.
-  state.stockItems.filter(i=>itemIsLow(i)).forEach(i=>{
-    const whName = (state.warehouses.find(w=>w.id===i.warehouseId)||{}).name || '';
-    list.push({
-      id: 'lowstock-'+i.id, severity: 'warn',
-      title: `Низький залишок: ${i.name}`,
-      subtitle: `${fmt(i.qty)} ${i.unit} на складі «${whName}» (мінімум ${fmt(i.min)})`,
-      action: ()=>{ state.currentWarehouse = i.warehouseId; view='stock'; stockSubview='stock'; render(); }
+  // 1) Низький залишок — ОДНЕ сповіщення на склад (а не по кожній позиції), щоб не заглушувати важливе.
+  {
+    const byWh = {};
+    state.stockItems.filter(i=>itemIsLow(i)).forEach(i=>{ (byWh[i.warehouseId] = byWh[i.warehouseId] || []).push(i); });
+    Object.keys(byWh).forEach(whId=>{
+      const items = byWh[whId];
+      const whName = (state.warehouses.find(w=>w.id===whId)||{}).name || '';
+      const names = items.slice(0,4).map(i=>`${i.name} ${fmt(i.qty)}/${fmt(i.min)} ${i.unit}`).join(', ') + (items.length>4 ? ` … ще ${items.length-4}` : '');
+      list.push({
+        id: 'lowstock-wh-'+whId+'-'+items.map(i=>i.id).sort().join(','), severity: 'warn',
+        title: `Мало на складі «${whName}»: ${items.length} поз.`,
+        subtitle: names,
+        action: ()=>{ state.currentWarehouse = whId; view='stock'; stockSubview='stock'; render(); }
+      });
     });
-  });
+  }
+  if(!isOwner()) return list.filter(n=>!state.dismissedNotifications.includes(n.id));
   // 2) High shrinkage on recent productions.
   state.productions.filter(p=>p.status==='done').slice(0,30).forEach(p=>{
     (p.items||[]).forEach((it,idx)=>{
