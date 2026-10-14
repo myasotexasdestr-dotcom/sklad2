@@ -1582,14 +1582,14 @@ function cashierRequestView(){
   formCard.appendChild(el(`<div class="sub text-xs mb-1.5">Що потрібно</div>`));
   const selHost = el(`<div class="mb-2"></div>`);
   let selectedId = items[0].id;
-  const sel = customSelect(items.map(i=>({value:i.id, label:i.name})), selectedId, (v)=>{ selectedId = v; });
+  const sel = customSelect(items.map(i=>({value:i.id, label:i.name})), selectedId, (v)=>{ selectedId = v; if(typeof reqGuard!=='undefined') reqGuard.refresh(); });
   selHost.appendChild(sel);
   formCard.appendChild(selHost);
 
   formCard.appendChild(el(`<div class="sub text-xs mb-1">Скільки потрібно</div>`));
   const qtyInput = el(`<input type="text" inputmode="decimal" class="w-full py-2.5 px-3 mb-2" style="border-radius:10px;background:var(--card2);color:var(--text);border:1px solid rgba(47,65,114,.25)" placeholder="0">`);
   formCard.appendChild(qtyInput);
-  const purchaseGuard = guardQty(qtyInput, ()=>((catalog[selectedIdx]||{}).unit||''), ()=>0, { showUnit:false });
+  const reqGuard = guardQty(qtyInput, ()=>((items.find(i=>i.id===selectedId)||{}).unit||''), ()=>0, { showUnit:false });
 
   const formErr = el(`<div class="text-sm mb-2" style="color:var(--danger);min-height:1.2em"></div>`);
   formCard.appendChild(formErr);
@@ -1598,7 +1598,7 @@ function cashierRequestView(){
   addItemBtn.onclick = ()=>{
     const qty = parseFloat((qtyInput.value||'').replace(',','.')) || 0;
     if(qty<=0){ formErr.textContent = 'Вкажіть кількість більше нуля'; return; }
-    if(!purchaseGuard.check()){ formErr.textContent = 'Перевірте кількість: схоже на помилку одиниць (кг/г).'; return; }
+    if(!reqGuard.check()){ formErr.textContent = 'Перевірте кількість: схоже на помилку одиниць (кг/г).'; return; }
     const ing = items.find(i=>i.id===selectedId);
     formErr.textContent = '';
     const existing = draftItems.find(x=>x.ingredientId===ing.id);
@@ -4325,6 +4325,7 @@ function purchaseCreateView(){
   formCard.appendChild(el(`<div class="sub text-xs mb-1">Кількість</div>`));
   const qtyInput = el(`<input type="text" inputmode="decimal" class="w-full py-2.5 px-3 mb-2" style="border-radius:10px;background:var(--card2);color:var(--text);border:none" placeholder="0">`);
   formCard.appendChild(qtyInput);
+  const purchaseGuard = guardQty(qtyInput, ()=>((catalog[selectedIdx]||{}).unit||''), ()=>0, { showUnit:false });
 
   const formErr = el(`<div class="text-sm mb-2" style="color:var(--danger);min-height:1.2em"></div>`);
   formCard.appendChild(formErr);
@@ -4333,6 +4334,7 @@ function purchaseCreateView(){
   addItemBtn.onclick = ()=>{
     const qty = parseFloat((qtyInput.value||'').replace(',','.')) || 0;
     if(qty<=0){ formErr.textContent = 'Вкажіть кількість більше нуля'; return; }
+    if(!purchaseGuard.check()){ formErr.textContent = 'Перевірте кількість: схоже на помилку одиниць (кг/г).'; return; }
     formErr.textContent = '';
     const cand = catalog[selectedIdx];
     draftItems.push({ ...cand, qty });
