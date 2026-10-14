@@ -18,10 +18,16 @@ die() { printf '\033[31mПОМИЛКА: %s\033[0m\n' "$*" >&2; exit 1; }
 command -v curl >/dev/null || die "потрібен curl"
 command -v node >/dev/null || die "потрібен node"
 
-say "Визначаю коміт для «$REF»…"
-SHA=$(curl -fsSL -H "Accept: application/vnd.github.sha" "https://api.github.com/repos/$REPO/commits/$REF") || die "не вдалося отримати коміт (мережа або приватний репозиторій?)"
-[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || die "несподіана відповідь GitHub: ${SHA:0:80}"
+if [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+  SHA="$REF"
+else
+  say "Визначаю коміт для «$REF»…"
+  SHA=$(curl -fsSL --max-time 20 -H "Accept: application/vnd.github.sha" "https://api.github.com/repos/$REPO/commits/$REF" 2>/dev/null || true)
+  [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || die "api.github.com недоступний з цього сервера — вкажіть повний 40-символьний коміт: bash deploy.sh <SHA>"
+fi
 say "Коміт: $SHA"
+API_OK=1
+curl -fsS --max-time 10 -o /dev/null "https://api.github.com/repos/$REPO" 2>/dev/null || { API_OK=0; echo "  (api.github.com недоступний — перевірка хешу пропущена, лишається розмір і синтаксис)"; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/public"
@@ -30,9 +36,12 @@ blob_sha() { { printf 'blob %s\0' "$(wc -c < "$1")"; cat "$1"; } | sha1sum | cut
 
 for f in "${ALL_FILES[@]}"; do
   curl -fsSL "https://raw.githubusercontent.com/$REPO/$SHA/$f" -o "$TMP/$f" || die "не вдалося завантажити $f"
-  want=$(curl -fsSL "https://api.github.com/repos/$REPO/contents/$f?ref=$SHA" | grep -m1 '"sha"' | sed 's/.*"sha": *"\([0-9a-f]*\)".*/\1/')
-  have=$(blob_sha "$TMP/$f")
-  [[ -n "$want" && "$want" == "$have" ]] || die "файл $f пошкоджений під час завантаження (хеш не збігся)"
+  if [[ "$API_OK" == 1 ]]; then
+    want=$(curl -fsSL "https://api.github.com/repos/$REPO/contents/$f?ref=$SHA" | grep -m1 '"sha"' | sed 's/.*"sha": *"\([0-9a-f]*\)".*/\1/')
+    have=$(blob_sha "$TMP/$f")
+    [[ -n "$want" && "$want" == "$have" ]] || die "файл $f пошкоджений під час завантаження (хеш не збігся)"
+  fi
+  [[ -s "$TMP/$f" ]] || die "файл $f порожній"
   printf '  ✓ %s (%s байт)\n' "$f" "$(wc -c < "$TMP/$f")"
 done
 
