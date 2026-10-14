@@ -496,7 +496,13 @@ function cbNormalizeReceipt(r) {
     if (!isFinite(lineKop)) lineKop = 0;
     const code = good.code !== undefined && good.code !== null ? String(good.code) : '';
     const name = String(good.name || g.name || '').trim();
-    return { key: code ? 'c:' + code : 'n:' + name.toLowerCase(), code, name, qty: Math.abs(qty), lineKop: Math.abs(lineKop) };
+    // Додатки/модифікатори рядка (напр. обраний напій у комбо) — лише назви; клієнт добирає ними позицію слота комбо.
+    const addonsRaw = Array.isArray(g.add_ons) ? g.add_ons : (Array.isArray(g.addons) ? g.addons : []);
+    const addons = addonsRaw.map(a => {
+      const x = a.add_on || a.addon || a;
+      return { name: String(x.name || a.name || '').trim(), qty: Math.abs(Number(a.quantity) || 1000) / 1000 };
+    }).filter(a => a.name);
+    return { key: code ? 'c:' + code : 'n:' + name.toLowerCase(), code, name, qty: Math.abs(qty), lineKop: Math.abs(lineKop), addons };
   }).filter(g => g.qty > 0 && g.name);
   // Знижки на весь чек: масштабуємо суми рядків, щоб у сумі вони дорівнювали фактичному total_sum.
   const sumLines = goods.reduce((a, g) => a + g.lineKop, 0);
@@ -504,7 +510,7 @@ function cbNormalizeReceipt(r) {
   const k = sumLines > 0 && totalAbs > 0 ? totalAbs / sumLines : 1;
   goods = goods.map(g => {
     const sum = Math.round(g.lineKop * k) / 100;
-    return { key: g.key, code: g.code, name: g.name, qty: g.qty, sum, price: Number((sum / g.qty).toFixed(2)) };
+    return { key: g.key, code: g.code, name: g.name, qty: g.qty, sum, price: Number((sum / g.qty).toFixed(2)), addons: g.addons };
   });
   return {
     id: String(r.id),

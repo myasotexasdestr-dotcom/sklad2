@@ -495,7 +495,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-15.2';
+const APP_VERSION='2026-10-15.3';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -7696,7 +7696,7 @@ function reprocessCheckboxToday(){
     orders.forEach(o=>(o.items||[]).forEach(l=>{
       const m = remap(l);
       if(m){
-        const nl = Object.assign({}, l, { name: m.product.name, checkboxKey: m.key, unmapped: false, optionKey:'', selectedOptions:[], optionsCostSnapshot:0, comboSelections:[] }, productLineFields(m.product));
+        const nl = Object.assign({}, l, { name: m.product.name, checkboxKey: m.key, unmapped: false, optionKey:'', selectedOptions:[], optionsCostSnapshot:0, comboSelections:[] }, productLineFields(m.product, { names:(l.cbHints||[]).slice(), used:[] }));
         delete nl.unmapped;
         lines.push(nl);
       } else lines.push(Object.assign({}, l));
@@ -7727,14 +7727,33 @@ function reprocessCheckboxToday(){
 }
 // Перетворює чек Checkbox на замовлення(я) + продаж(і) + списання зі складу. Повертає true, якщо щось застосовано.
 // Поля рядка продажу, що залежать від товару меню (тип, рецепт-знімок, собівартість; для комбо — склад слотів).
-function productLineFields(product){
+// Порівняння назв позицій з чека та меню: без регістру, пробілів і розділових знаків; збіг або вкладеність (мін. 3 символи).
+function normName(x){ return String(x||'').toLowerCase().replace(/[^a-zа-яіїєґ0-9]+/g,''); }
+function nameMatches(a,b){
+  const x = normName(a), y = normName(b);
+  if(x.length<3 || y.length<3) return false;
+  return x===y || x.includes(y) || y.includes(x);
+}
+// hints = { names:[...] } — назви з чека (додатки рядка, безкоштовні рядки), за якими обираємо позицію кожного слота комбо.
+// Знайдений збіг «витрачається» (видаляється зі списку), щоб один напій не списався двічі; hints.used — які назви вжито.
+function pickComboSub(slot, hints){
+  const cands = (slot.productIds||[]).map(id=>state.products.find(x=>x.id===id)).filter(Boolean);
+  if(hints && hints.names && hints.names.length){
+    for(const c of cands){
+      const i = hints.names.findIndex(h=>nameMatches(h, c.name));
+      if(i>=0){ const h = hints.names.splice(i,1)[0]; (hints.used = hints.used||[]).push(h); return c; }
+    }
+  }
+  return cands[0] || null;
+}
+function productLineFields(product, hints){
   const f = { productId: product.id, productType: product.type, category: product.category,
     recipeSnapshot: product.type==='dish' ? (product.ingredients||[]).map(i=>({...i})) : [],
     costPriceSnapshot: Number(product.costPrice)||0 };
   if(product.type==='combo'){
-    // Що саме обрано в комбо, зовнішнє джерело не знає — списуємо першу позицію кожного слота.
+    // Що саме обрано в комбо, підказують назви з чека (додаток або безкоштовний рядок). Якщо збігу немає — перша позиція слота.
     f.comboSelections = (product.comboSlots||[]).map(sl=>{
-      const sub = state.products.find(x=>x.id===(sl.productIds||[])[0]);
+      const sub = pickComboSub(sl, hints);
       return sub ? { slotId:sl.id, slotLabel:sl.label, productId:sub.id, name:sub.name, productType:sub.type,
         recipeSnapshot: sub.type==='dish' ? (sub.ingredients||[]).map(i=>({...i})) : [], selectedOptions:[] } : null;
     }).filter(Boolean);
@@ -7795,15 +7814,41 @@ function applyCheckboxReceipt(r){
     cb.stats.unmappedRegisters++;
   }
   const sign = r.isReturn ? -1 : 1;
-  const lines = r.goods.map(g=>{
+  // Безкоштовні рядки чека (сума 0) — кандидати «що саме обрано в комбо» (напр. окремо пробитий напій).
+  const zeroGoods = r.goods.filter(g=>!(g.sum>0));
+  const pool = zeroGoods.map(g=>g.name);
+  const usedNames = [];
+  let lines = r.goods.map(g=>{
     cb.goodsSeen[g.key] = { name:g.name, code:g.code, price:g.price };
     const pid = cb.itemMap[g.key];
     const product = pid ? state.products.find(p=>p.id===pid) : null;
     const base = { id: uid(), name: product ? product.name : g.name, checkboxName: g.name, checkboxKey: g.key, price: g.price, qty: g.qty*sign,
       modifierId:null, modifierName:null, selectedOptions:[], optionsCostSnapshot:0, optionKey:'', comboSelections:[] };
-    if(!product){ cb.stats.unmappedLines++; return Object.assign(base, { productId:null, productType:'unmapped', recipeSnapshot:[], costPriceSnapshot:0, unmapped:true, category:null }); }
-    return Object.assign(base, productLineFields(product));
+    if(!product){ return Object.assign(base, { productId:null, productType:'unmapped', recipeSnapshot:[], costPriceSnapshot:0, unmapped:true, category:null }); }
+    let hints = null;
+    if(product.type==='combo'){
+      const own = (g.addons||[]).map(a=>a.name);
+      hints = { names: own.concat(pool), used: [] };
+      base.cbHints = own.concat(pool);
+    }
+    const out = Object.assign(base, productLineFields(product, hints));
+    if(hints){
+      // Витрачені «пул-підказки» прибираємо з пулу, щоб інше комбо їх не взяло вдруге.
+      (hints.used||[]).forEach(h=>{ const i = pool.indexOf(h); if(i>=0){ pool.splice(i,1); usedNames.push(h); } });
+    }
+    return out;
   });
+  // Безкоштовний рядок, який став частиною комбо, не списуємо вдруге окремо.
+  if(usedNames.length){
+    const pending = usedNames.slice();
+    lines = lines.filter(l=>{
+      if(l.price>0) return true;
+      const i = pending.indexOf(l.checkboxName);
+      if(i>=0){ pending.splice(i,1); return false; }
+      return true;
+    });
+  }
+  cb.stats.unmappedLines += lines.filter(l=>l.unmapped).length;
   recordSaleGroups({ lines, locationId, ms: r.ms, who:'Checkbox', baseId: r.id, idKey:'checkboxId',
     comment: 'Checkbox'+(r.fiscalCode?' · '+r.fiscalCode:'')+(r.isReturn?' · ПОВЕРНЕННЯ':''),
     extra: { cashierName: r.cashier||'', isReturn: !!r.isReturn } });
