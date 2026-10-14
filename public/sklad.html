@@ -495,7 +495,7 @@ let orderStep = 'products'; // 'location' | 'products' | 'cart'
 let orderCategoryFilter = null; // null (показуємо все) | 'meat' | 'fastfood' — тільки для екрана вибору товарів
 let orderSearchQuery = '';
 let expandedProductId = null;
-const APP_VERSION='2026-10-14.3';
+const APP_VERSION='2026-10-15.1';
 let optionPicks = {}; // groupId -> optionId, для товару, що розгорнуто в «Створити замовлення»
 let editingStaffId = null;
 let editingProductId = null;
@@ -3016,7 +3016,7 @@ function tabbar(){
   const isPrep = u && u.role==='prep';
   const isCashier = u && u.role==='cashier';
   const tabs = isOwner()
-    ? [['dashboard','dashboard'],['purchase','purchase'],['stock','stock'],['settings','settings']]
+    ? [['dashboard','dashboard'],['stock','stock'],['settings','settings']]
     : (isCook ? [['stock','stock'],['productionList','flame']]
       : (isPrep ? [['prepDashboard','dashboard'],['productionStart','flame'],['prepTransferLocations','transfer'],['myHistory','history']]
         : (isCashier ? [['stock','dashboard'],['purchase','purchase'],['scheduleCalendar','calendar'],['cashierRequest','transfer'],['myHistory','history']]
@@ -3044,10 +3044,11 @@ function tabbar(){
   // Власник відкрив поставку прямо зі "Складу точки" (картка в Аналітиці) — підсвічуємо той самий таб.
   if(view==='transferStart' && transferReturnTo==='locationStock') activeKey = 'dashboard';
   // "Закупівля" (нове поповнення складу закупівлею) відкрита з Закупівель, або, у касира, з власної вкладки «Закупка».
-  if(view==='purchaseCreate') activeKey = 'purchase';
-  if(isOwner() && (view==='prepTransferLocations' || view==='locationTransferNeeds' || (view==='transferStart' && transferReturnTo==='locationTransferNeeds'))) activeKey = 'purchase';
+  if(isOwner() && view==='purchase') activeKey = 'dashboard';
+  if(view==='purchaseCreate') activeKey = isOwner() ? 'dashboard' : 'purchase';
+  if(isOwner() && (view==='prepTransferLocations' || view==='locationTransferNeeds' || (view==='transferStart' && transferReturnTo==='locationTransferNeeds'))) activeKey = 'dashboard';
   const bar = el(`<div class="navbar-pill navbar-tabs"></div>`);
-  const LABELS = { dashboard:'Головна', purchase:'Закупівлі', stock:'Склад', settings:'Ще', productionList:'Готовка',
+  const LABELS = { dashboard:'Сьогодні', purchase:'Закупівлі', stock:'Склад', settings:'Ще', productionList:'Готовка',
     prepDashboard:'Головна', productionStart:'Готовка', prepTransferLocations:'Поставки', myHistory:'Історія',
     scheduleCalendar:'Графік', cashierRequest:'Запит', history:'Історія' };
   const canSell = false; // замовлення з застосунку створювати не можна — продажі лише з чеків Checkbox
@@ -3260,6 +3261,51 @@ function analyticsView(){
   return wrap;
 }
 
+// «Що потребує уваги»: чотири світлофори замість десятків екранів. Червоне/жовте — тапніть, щоб відкрити, де це виправити.
+function ownerAttentionCards(){
+  const today = localDateKey(new Date());
+  const items = [];
+  // 1. Зміни
+  const sched = (state.shiftSchedule||[]).filter(e=>e.dateKey===today);
+  const closings = (state.shiftClosings||[]).filter(c=>c.dateKey===today);
+  const closedIds = new Set(closings.map(c=>c.staffId));
+  const openShifts = sched.filter(e=>!closedIds.has(e.staffId));
+  const badLines = [];
+  closings.forEach(c=>(c.lines||[]).forEach(l=>{ if(l.diff) badLines.push(l); }));
+  if(!sched.length) items.push({ico:'calendar', lvl:'ok', title:'Зміни', sub:'Сьогодні змін немає в графіку', go:()=>{view='scheduleCalendar';render();}});
+  else if(openShifts.length) items.push({ico:'calendar', lvl:'warn', title:'Зміни', sub:`Не закрито: ${openShifts.length} з ${sched.length}`, go:()=>{view='scheduleCalendar';render();}});
+  else if(badLines.length) items.push({ico:'calendar', lvl:'warn', title:'Зміни', sub:`Усі закрито, розбіжностей: ${badLines.length}`, go:()=>{view='scheduleCalendar';render();}});
+  else items.push({ico:'calendar', lvl:'ok', title:'Зміни', sub:`Усі закрито (${sched.length}), розбіжностей немає`, go:()=>{view='scheduleCalendar';render();}});
+  // 2. Чекає рішення
+  const pend = (state.transferCorrections||[]).filter(c=>c.status==='PENDING').length;
+  if(pend) items.push({ico:'checklist', lvl:'bad', title:'Чекає вашого рішення', sub:`Виправлень поставок: ${pend}`, go:()=>{view='transferList';render();}});
+  else items.push({ico:'checklist', lvl:'ok', title:'Чекає вашого рішення', sub:'Нічого', go:()=>{view='transferList';render();}});
+  // 3. Дефіцит
+  const low = (state.stockItems||[]).filter(itemIsLow);
+  items.push(low.length
+    ? {ico:'purchase', lvl:'warn', title:'Треба докупити', sub:`Позицій нижче мінімуму: ${low.length}`, go:()=>{view='stock';render();}}
+    : {ico:'purchase', lvl:'ok', title:'Треба докупити', sub:'Дефіциту немає', go:()=>{view='stock';render();}});
+  // 4. Втрати
+  const neg = (state.stockItems||[]).filter(i=>Number(i.qty)<0).length;
+  const stuck = (state.transfers||[]).filter(t=>t.status==='SENT' && t.createdMs && Date.now()-t.createdMs>24*3600*1000).length;
+  const lossBits = [];
+  if(neg) lossBits.push(`мінус на складі: ${neg}`);
+  if(stuck) lossBits.push(`поставки в дорозі >1 доби: ${stuck}`);
+  items.push(lossBits.length
+    ? {ico:'flame', lvl:'bad', title:'Втрати й ризики', sub:lossBits.join(' · '), go:()=>{view=neg?'stock':'transferList';render();}}
+    : {ico:'flame', lvl:'ok', title:'Втрати й ризики', sub:'Усе чисто', go:()=>{view='stock';render();}});
+  const col = {ok:'var(--accent2)', warn:'#e0a100', bad:'var(--danger)'};
+  const panel = el(`<div class="panel"></div>`);
+  items.forEach(it=>{
+    const row = el(`<div class="tx"><div class="avatar soft" style="color:${col[it.lvl]}">${ICONS[it.ico]}</div><div class="tx-main"><div class="tx-name">${escapeHtml(it.title)}</div><div class="tx-sub">${escapeHtml(it.sub)}</div></div><div style="width:12px;height:12px;border-radius:50%;background:${col[it.lvl]};flex-shrink:0"></div></div>`);
+    row.onclick = it.go; panel.appendChild(row);
+  });
+  const box = el(`<div></div>`);
+  box.appendChild(el(`<div class="sec-head"><div class="sec-title">Потребує уваги</div></div>`));
+  box.appendChild(panel);
+  return box;
+}
+
 function dashboardView(){
   const wrap = el(`<div></div>`);
 
@@ -3271,7 +3317,7 @@ function dashboardView(){
   const dateKey = dateKeyFromOffset(dashboardOffset);
   const headRow = el(`
     <div class="flex items-center justify-between mb-3">
-      <div class="page-title">Огляд</div>
+      <div class="page-title">Сьогодні</div>
       <div class="flex items-center gap-1">
         <button id="dPrev" class="navicon-btn" style="width:26px;height:26px" ${dashboardOffset>=6?'disabled':''}>
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="${dashboardOffset>=6?'#b7c0d3':'var(--text)'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -3319,6 +3365,7 @@ function dashboardView(){
   hero.querySelectorAll('.hero-chk').forEach(b=>{ b.onclick = (e)=>{ e.stopPropagation(); receiptsLocationId = b.getAttribute('data-loc'); view='receipts'; render(); }; });
   hero.querySelector('#heroGo').onclick = ()=>{ view='analytics'; render(); };
   wrap.appendChild(hero);
+  wrap.appendChild(ownerAttentionCards());
 
   // --- Швидкі дії ---
   wrap.appendChild(el(`<div class="sec-head"><div class="sec-title">Швидкі дії</div></div>`));
@@ -8337,21 +8384,29 @@ function settingsView(){
   const wrap = el(`<div></div>`);
 
   // --- Навигационный список разделов ---
-  const navItems = [
-    { label: 'Меню і ціни', icon: 'tag', action: ()=>{ view='menu'; render(); } },
-    { label: 'Поставки', icon: 'transfer', action: ()=>{ view='transferList'; render(); } },
-    { label: 'Склади', icon: 'box', action: ()=>{ view='stock'; render(); } },
-    { label: 'Зарплати й виплати', icon: 'receipt', action: ()=>{ payrollPeriod=null; view='payroll'; render(); } },
-    { label: 'Аналітика', icon: 'dashboard', action: ()=>{ view='analytics'; render(); } },
-    { label: 'Графік змін', icon: 'calendar', action: ()=>{ view='scheduleCalendar'; render(); } },
-    { label: 'Завдання', icon: 'checklist', action: ()=>{ view='tasks'; render(); } },
-    { label: 'Checkbox', icon: 'receipt', action: ()=>{ cbUi.cfg=null; view='checkbox'; render(); } },
-    { label: 'Продажі Glovo', icon: 'truck', action: ()=>{ glovoTab='sales'; view='glovo'; render(); } }
+  const groups = [
+    ['Щодня', [
+      { label: 'Аналітика', icon: 'dashboard', action: ()=>{ view='analytics'; render(); } },
+      { label: 'Закупівлі', icon: 'purchase', action: ()=>{ view='purchase'; render(); } },
+      { label: 'Поставки', icon: 'transfer', action: ()=>{ view='transferList'; render(); } },
+      { label: 'Завдання', icon: 'checklist', action: ()=>{ view='tasks'; render(); } }
+    ]],
+    ['Люди', [
+      { label: 'Графік змін', icon: 'calendar', action: ()=>{ view='scheduleCalendar'; render(); } },
+      { label: 'Зарплати й виплати', icon: 'receipt', action: ()=>{ payrollPeriod=null; view='payroll'; render(); } }
+    ]],
+    ['Продукти', [
+      { label: 'Меню і ціни', icon: 'tag', action: ()=>{ view='menu'; render(); } },
+      { label: 'Рецепти', icon: 'leaf', action: ()=>{ view='ingredients'; render(); } },
+      { label: 'Норми розхідників', icon: 'checklist', action: ()=>{ view='supplyNorms'; render(); } }
+    ]],
+    ['Продажі', [
+      { label: 'Checkbox', icon: 'receipt', action: ()=>{ cbUi.cfg=null; view='checkbox'; render(); } },
+      { label: 'Продажі Glovo', icon: 'truck', action: ()=>{ glovoTab='sales'; view='glovo'; render(); } }
+    ]]
   ];
-  // Рідше потрібне — згорнуто в «Додатково», щоб головний список був коротким.
+  // Рідко потрібне — згорнуто в «Додатково».
   const moreItems = [
-    { label: 'Рецепти', icon: 'leaf', action: ()=>{ view='ingredients'; render(); } },
-    { label: 'Норми розхідників', icon: 'checklist', action: ()=>{ view='supplyNorms'; render(); } },
     { label: 'Зв\'язки готовки', icon: 'link', action: ()=>{ view='productionLinks'; render(); } },
     { label: 'Нова заготовка', icon: 'flame', action: ()=> openPrepare(null, 'settings') },
     { label: 'Нова готовка', icon: 'flame', action: ()=>{ view='productionStart'; render(); } },
@@ -8368,9 +8423,12 @@ function settingsView(){
     row.onclick = item.action;
     return row;
   };
-  const navGrid = el(`<div class="grid grid-cols-2 gap-x-3 mb-2"></div>`);
-  navItems.forEach(item=> navGrid.appendChild(mkNavRow(item)));
-  wrap.appendChild(navGrid);
+  groups.forEach(([title, list])=>{
+    wrap.appendChild(el(`<div class="eyebrow" style="margin:10px 0 2px">${escapeHtml(title)}</div>`));
+    const g = el(`<div class="grid grid-cols-2 gap-x-3 mb-1"></div>`);
+    list.forEach(item=> g.appendChild(mkNavRow(item)));
+    wrap.appendChild(g);
+  });
   const moreToggle = el(`<button class="text-sm font-semibold mb-3" style="color:var(--accent);background:none;border:none;padding:4px 0">${settingsMoreOpen?'▾':'▸'} Додатково</button>`);
   moreToggle.onclick = ()=>{ settingsMoreOpen = !settingsMoreOpen; render(); };
   wrap.appendChild(moreToggle);
