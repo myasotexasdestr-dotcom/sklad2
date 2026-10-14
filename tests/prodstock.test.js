@@ -1,0 +1,43 @@
+const { chromium } = require('playwright'); const fs=require('fs');
+(async()=>{
+  const b=await chromium.launch(require('./_env').launchOpts); const p=await b.newPage({viewport:{width:390,height:1100}});
+  p.on('pageerror',e=>console.log('PAGEERR',e.message)); p.on('dialog',d=>d.dismiss());
+  await p.route('**://cdn.tailwindcss.com/**',r=>r.abort()); await p.route('**://fonts.g*/**',r=>r.abort()); await p.route('**://telegram.org/**',r=>r.abort());
+  let version=1, data={locations:[{id:'L1',name:'ЦУМ'}],warehouses:[{id:'wBase',name:'База'},{id:'wC',name:'ЦУМ склад',locationId:'L1'}],staff:[{id:'o',name:'Власник',pin:'1111',role:'owner',locationId:'L1'}],
+    stockItems:[{id:'m1',warehouseId:'wBase',name:'Курка',unit:'кг',qty:1,min:10,costPerUnit:5,category:'meat'},{id:'f1',warehouseId:'wBase',name:'Лаваш',unit:'шт',qty:2,min:10,costPerUnit:5,category:'fastfood'}],
+    recipeIngredients:[],ingredientStock:[],history:[],products:[],orders:[],sales:[],transfers:[],payouts:[]};
+  await p.route('**/api/**',async r=>{const req=r.request();const path=new URL(req.url()).pathname;const j=(s,o)=>r.fulfill({status:s,contentType:'application/json',body:JSON.stringify(o)});
+    if(path==='/api/auth/login')return j(200,{staffId:'o'}); if(path.startsWith('/api/checkbox'))return j(200,{enabled:false,pending:0});
+    if(path==='/api/state'&&req.method()==='GET')return j(200,{version,data}); if(path==='/api/state'){const bb=JSON.parse(req.postData());version++;data=bb.data;return j(200,{version});} return j(404,{});});
+  await p.goto(require('./_env').HTML_URL);
+  await p.addStyleTag({content:fs.readFileSync(require('./_env').CSS_PATH,'utf8')});
+  await p.fill('#pinInput','1111'); await p.evaluate(()=>document.getElementById('loginBtn').click()); await p.waitForTimeout(1200);
+  const R=[];const check=(n,ok)=>{R.push(ok);console.log((ok?'PASS ':'FAIL ')+n)};
+  await p.evaluate(()=>{ view='productAdd'; editingProductId=null; render(); }); await p.waitForTimeout(300);
+  check('form has Склади section', await p.evaluate(()=>document.body.innerText.includes('Склади')));
+  const pr=await p.evaluate(()=>{ const x=addProduct({name:'Кола',category:'fastfood',type:'product',ingredients:[],costPrice:20,price:50,optionGroups:[],comboSlots:[],warehouseIds:['wC'],unit:'шт'}); return {ret:!!x, rows:state.stockItems.filter(i=>i.name==='Кола').map(i=>i.warehouseId+':'+i.unit+':'+i.qty)}; });
+  check('addProduct returns & creates row only on chosen wh', pr.ret && pr.rows.join()==='wC:шт:0');
+  await p.evaluate(()=>{ const pd=state.products.find(x=>x.name==='Кола'); ensureProductStock(pd,['wC','wBase'],'шт'); });
+  check('ensure idempotent + adds base', await p.evaluate(()=>state.stockItems.filter(i=>i.name==='Кола').length===2));
+  await p.evaluate(()=>{ const x=addProduct({name:'Страва',category:'meat',type:'dish',ingredients:[],costPrice:0,price:10,optionGroups:[],comboSlots:[],warehouseIds:['wC']}); });
+  check('dish creates no stock', await p.evaluate(()=>!state.stockItems.some(i=>i.name==='Страва')));
+  check('menuProductNames', await p.evaluate(()=>menuProductNames().join()==='Кола'));
+  await p.evaluate(()=>{ state.currentWarehouse='wBase'; const w=state.warehouses[0]; const r=startProduction([{inputName:'Курка',inputWeight:1}],'wBase'); });
+  const fin=await p.evaluate(()=>{ const pr=state.productions.slice(-1)[0]; pr.items[0].outputName='Кола'; try{ finishProduction(pr.id,{[pr.items[0].id]:0.8}); }catch(e){ return 'ERR '+e.message; } const r=state.stockItems.find(i=>i.name==='Кола'&&i.warehouseId==='wBase'); return r?r.qty+':'+r.category:'none'; });
+  console.log('fin',fin);
+  check('finish adds to menu product stock row', /^0\.8:/.test(fin));
+  await p.evaluate(()=>{ addStockItem('Пакети','шт',5,0,1,false,'fastfood','supplies'); addStockItem('Фарш','кг',5,0,1,false,'meat'); state.productionLinks=[{rawName:'Курка',outputName:'Філе'}]; state.stockItems.push({id:'zz',warehouseId:'wBase',name:'Філе',unit:'кг',qty:1,min:0,costPerUnit:1,category:'meat'}); state.currentWarehouse='wBase'; stockSubview='stock'; view='stock'; stockSectionFilter='all'; render(); });
+  await p.waitForTimeout(300);
+  const sec=await p.evaluate(()=>['Пакети','Фарш','Філе','Кола','Курка'].map(n=>n+':'+stockSectionOf(state.stockItems.find(i=>i.name===n))).join());
+  console.log(sec);
+  check('sections resolved', sec==='Пакети:supplies,Фарш:raw,Філе:prep,Кола:goods,Курка:raw');
+  const txt=await p.evaluate(()=>document.body.innerText);
+  check('chips shown', txt.includes('Розхідники')&&txt.includes('Заготовки')&&txt.includes('Сировина'));
+  await p.locator('button:has-text("Розхідники")').first().click(); await p.waitForTimeout(200);
+  check('filter shows only supplies', await p.evaluate(()=>{const t=document.body.innerText;return t.includes('Пакети')&&!t.includes('Фарш')&&!t.includes('Філе');}));
+  await p.evaluate(()=>{ editingStockItemId=state.stockItems.find(i=>i.name==='Фарш').id; view='stockItemAdd'; render(); }); await p.waitForTimeout(200);
+  check('form has section picker', await p.evaluate(()=>document.body.innerText.includes('Розділ складу')));
+  await p.evaluate(()=>{ const it=state.stockItems.find(i=>i.name==='Фарш'); updateStockItem(it.id,{name:'Фарш',unit:'кг',qty:5,min:0,costPerUnit:1,category:'meat',section:'prep'}); });
+  check('update sets section', await p.evaluate(()=>stockSectionOf(state.stockItems.find(i=>i.name==='Фарш'))==='prep'));
+  console.log(R.every(x=>x)?'ALL PASS':'SOME FAIL'); await b.close();
+})();

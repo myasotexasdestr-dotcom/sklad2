@@ -683,6 +683,18 @@ app.post('/api/checkbox/confirm', requireAuth, (req, res) => {
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
+// ---- Щоденний підсумок власнику в Telegram (digest.js) ----
+const digest = require('./digest');
+app.get('/api/digest/preview', requireAuth, requireOwner, (req, res) => {
+  const c = digest.cfg();
+  res.json({ text: digest.buildDigest(JSON.parse(getStateStmt.get().data)), configured: c.configured, hour: c.hour });
+});
+app.post('/api/digest/send', requireAuth, requireOwner, async (req, res) => {
+  const r = await digest.sendTelegram(digest.buildDigest(JSON.parse(getStateStmt.get().data)));
+  res.status(r.ok ? 200 : 400).json(r);
+});
+digest.startDigestScheduler(() => JSON.parse(getStateStmt.get().data), DATA_DIR);
+
 // Сам клієнт — та ж https-адреса, яку прописуєте в BotFather як Web App URL.
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'sklad.html')));

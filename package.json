@@ -5,7 +5,8 @@
   "private": true,
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node tests/run-all.js"
   },
   "engines": {
     "node": ">=18"
@@ -13,5 +14,8 @@
   "dependencies": {
     "better-sqlite3": "^11.3.0",
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0"
   }
 }
